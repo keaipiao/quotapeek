@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, win32 } from "node:path";
 import test from "node:test";
@@ -8,7 +8,10 @@ import { resolveCodexRuntime, verifyAppManagedCodexSignature } from "../src/app-
 import { ERROR_CODES } from "../src/errors.mjs";
 
 async function fixture(t) {
-  const root = await mkdtemp(join(tmpdir(), "codex-quota-runtime-"));
+  // GitHub's Windows runner may expose TEMP through an 8.3 alias while
+  // fs.realpath() returns the long form. Canonicalize the fixture root so the
+  // expected paths exercise identity rather than spelling differences.
+  const root = await realpath(await mkdtemp(join(tmpdir(), "codex-quota-runtime-")));
   t.after(() => rm(root, { recursive: true, force: true }));
   return root;
 }
