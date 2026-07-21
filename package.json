@@ -1,10 +1,10 @@
 {
-  "name": "codex-sidebar-quota",
+  "name": "quotapeek",
   "version": "0.2.0",
-  "description": "A local, no-tray, localized quota panel for the Windows Codex/ChatGPT desktop client.",
+  "description": "A local, no-tray quota panel for the Windows Codex desktop app.",
   "type": "module",
   "bin": {
-    "codex-sidebar-quota": "./bin/codex-sidebar-quota.mjs"
+    "quotapeek": "bin/quotapeek.mjs"
   },
   "os": [
     "win32"
@@ -33,13 +33,23 @@
     "prepack": "npm run check && npm test"
   },
   "keywords": [
+    "quotapeek",
     "codex",
     "chatgpt",
     "quota",
     "windows",
     "cdp"
   ],
+  "author": "keaipiao",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/keaipiao/quotapeek.git"
+  },
+  "homepage": "https://github.com/keaipiao/quotapeek#readme",
+  "bugs": {
+    "url": "https://github.com/keaipiao/quotapeek/issues"
+  },
   "publishConfig": {
     "access": "public",
     "provenance": true

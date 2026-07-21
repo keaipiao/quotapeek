@@ -1,6 +1,6 @@
 # Security policy
 
-Codex Sidebar Quota is an unofficial local companion that deliberately enables
+QuotaPeek for Codex is an unofficial local companion that deliberately enables
 a loopback Chrome DevTools Protocol endpoint in the official desktop process.
 Please understand this boundary before installing it.
 
@@ -28,7 +28,7 @@ maintainers until coordinated disclosure.
 
 Include:
 
-- the affected Codex Sidebar Quota version;
+- the affected QuotaPeek version;
 - Windows, Node.js, and Store app versions;
 - a minimal reproduction and expected impact;
 - whether another same-user process is required;

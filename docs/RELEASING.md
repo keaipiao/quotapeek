@@ -5,18 +5,14 @@ releases. Run release commands from PowerShell on a clean Windows checkout.
 
 ## One-time repository setup
 
-Do not invent repository metadata before the GitHub owner and repository name
-are final. Once they are known:
-
-- [ ] Create a public GitHub repository under the final user or organization.
-      Do not ask GitHub to generate another README, license, or `.gitignore`.
-- [ ] Initialize/import this checkout, set that repository as `origin`, push the
+- [ ] Create the public `keaipiao/quotapeek` GitHub repository without asking
+      GitHub to generate another README, license, or `.gitignore`.
+- [ ] Set `https://github.com/keaipiao/quotapeek.git` as `origin`, push the
       default branch, and verify `git remote -v` before adding a release tag.
-- [ ] Fill `repository`, `homepage`, and `bugs` in `package.json` with the real
-      GitHub owner/repository URL.
-- [ ] Confirm the unscoped npm name `codex-sidebar-quota` is available and owned
-      by the intended npm organization/user; change it before the first publish
-      if it is not.
+- [ ] Confirm `repository`, `homepage`, and `bugs` in `package.json` point to
+      `keaipiao/quotapeek`.
+- [ ] Confirm the unscoped npm name `quotapeek` is available and owned by the
+      intended npm maintainer before the first publish.
 - [ ] Confirm the package `author`/maintainer metadata and public contact policy.
 - [ ] Enable GitHub Private Vulnerability Reporting under repository security
       settings.
@@ -38,7 +34,7 @@ consume a long-lived `NPM_TOKEN` secret.
 ### Bootstrap a brand-new npm package
 
 npm requires a package to exist before a Trusted Publisher can be attached to
-it. If `codex-sidebar-quota` has never been published:
+it. If `quotapeek` has never been published:
 
 1. Leave `PUBLISH_NPM` absent or `false` and publish the first GitHub Release.
 2. Download its `.tgz` and `.sha256` assets and verify the checksum.
@@ -46,7 +42,7 @@ it. If `codex-sidebar-quota` has never been published:
 4. Publish that exact downloaded archive rather than repacking the checkout:
 
    ```powershell
-   npm.cmd publish .\codex-sidebar-quota-0.2.0.tgz --access public --provenance=false
+   npm.cmd publish .\quotapeek-0.2.0.tgz --access public --provenance=false
    ```
 
    The one-time `--provenance=false` overrides the package default because a
@@ -66,7 +62,7 @@ can change independently of this project.
 2. Update the version in `package.json` without creating a tag yet:
 
    ```powershell
-   npm.cmd version 0.2.0 --no-git-tag-version
+   npm.cmd version 0.2.0 --no-git-tag-version --allow-same-version
    ```
 
 3. Change the matching `CHANGELOG.md` heading from `Unreleased` to the release
@@ -113,7 +109,7 @@ After the release commit is merged on the default branch:
 ```powershell
 git switch <default-branch>
 git pull --ff-only
-git tag -a v0.2.0 -m "Codex Sidebar Quota 0.2.0"
+git tag -a v0.2.0 -m "QuotaPeek 0.2.0"
 git push origin v0.2.0
 ```
 
@@ -135,8 +131,8 @@ tag. If a release contains a defect, publish a new patch.
 - [ ] On a clean Windows 11 x64 user profile with Node.js 22+, run:
 
   ```powershell
-  npx.cmd --yes codex-sidebar-quota@0.2.0 install
-  npx.cmd --yes codex-sidebar-quota@0.2.0 doctor
+  npx.cmd --yes quotapeek@0.2.0 install
+  npx.cmd --yes quotapeek@0.2.0 doctor
   ```
 
 - [ ] Fully exit the Store app, launch **Codex + Quota**, and confirm English and

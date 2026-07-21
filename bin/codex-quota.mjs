@@ -9,6 +9,6 @@ main(argv).then((result) => {
 }).catch((error) => {
   const result = errorResult(error);
   if (argv.includes("--json")) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  else process.stderr.write(`codex-sidebar-quota: [${result.error.code}] ${result.error.message}\n`);
+  else process.stderr.write(`quotapeek: [${result.error.code}] ${result.error.message}\n`);
   process.exitCode = 1;
 });

@@ -146,7 +146,7 @@ try {
                 (Same-Path ([string]$existing.WorkingDirectory) $resolvedEngine) -and
                 ([string]$existing.Description -eq $ManagedDescription)
             if (-not $isCurrent -and -not (Test-ManagedShortcut $existing $managedEngines $powerShellPath)) {
-                Throw-ShortcutError "E_SHORTCUT_CONFLICT" "A same-name shortcut exists but is not owned by codex-sidebar-quota." @{ path = $destination }
+                Throw-ShortcutError "E_SHORTCUT_CONFLICT" "A same-name shortcut exists but is not owned by QuotaPeek for Codex." @{ path = $destination }
             }
         }
         $plans += [pscustomobject]@{ destination = $destination; existed = $existed; backup = $null }

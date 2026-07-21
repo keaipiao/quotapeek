@@ -613,6 +613,63 @@ test("update renders only the general Codex bucket with user-facing limit labels
   assert.equal(progress.getAttribute("aria-valuetext"), "剩余 75%");
 });
 
+test("the general quota header shows a known plan beside the title without replacing freshness", () => {
+  const environment = createEnvironment();
+  environment.evaluate();
+  const api = environment.window.__CODEX_QUOTA_PANEL__;
+  const value = snapshot(1_800_000_000_000);
+  value.buckets[0].planType = "pro";
+  value.buckets[1].planType = "plus";
+  api.update(value);
+  const host = environment.layout.children.at(-2);
+  const renderedText = textTree(host._shadow);
+
+  assert.match(renderedText, /Codex 通用额度/);
+  assert.match(renderedText, /Pro 20×/);
+  assert.doesNotMatch(renderedText, /Plus/);
+  assert.match(renderedText, /实时/);
+
+  api.update({ snapshot: value, availability: "cached" });
+  const cachedText = textTree(host._shadow);
+  assert.match(cachedText, /正在刷新/);
+  assert.doesNotMatch(cachedText, /Pro 20×/);
+
+  api.update(value);
+  assert.match(textTree(host._shadow), /Pro 20×/);
+
+  environment.advance(4 * 60 * 1000);
+  const countdownInterval = environment.intervals.find((entry) => entry.milliseconds === 30_000 && entry.active);
+  countdownInterval.callback();
+  assert.match(textTree(host._shadow), /Pro 20×/);
+  assert.match(textTree(host._shadow), /可能已过期/);
+
+  environment.advance(12 * 60 * 1000);
+  countdownInterval.callback();
+  assert.doesNotMatch(textTree(host._shadow), /Pro 20×/);
+  assert.match(textTree(host._shadow), /暂不可用/);
+});
+
+test("plan labels are allow-listed and hide internal or unknown plan types", () => {
+  const environment = createEnvironment();
+  environment.evaluate();
+  const { formatPlanLabel } = environment.window.__CODEX_QUOTA_PANEL__.__test;
+
+  assert.equal(formatPlanLabel("free"), "Free");
+  assert.equal(formatPlanLabel("go"), "Go");
+  assert.equal(formatPlanLabel("plus"), "Plus");
+  assert.equal(formatPlanLabel("prolite"), "Pro 5×");
+  assert.equal(formatPlanLabel("pro"), "Pro 20×");
+  assert.equal(formatPlanLabel("team"), "Team");
+  assert.equal(formatPlanLabel("business"), "Business");
+  assert.equal(formatPlanLabel("enterprise"), "Enterprise");
+  assert.equal(formatPlanLabel("edu"), "Edu");
+  assert.equal(formatPlanLabel("self_serve_business_usage_based"), null);
+  assert.equal(formatPlanLabel("enterprise_cbp_usage_based"), null);
+  assert.equal(formatPlanLabel("unknown"), null);
+  assert.equal(formatPlanLabel("future-plan"), null);
+  assert.equal(formatPlanLabel(null), null);
+});
+
 test("a model-specific bucket is never used as a fallback for general quota", () => {
   const environment = createEnvironment();
   environment.evaluate();

@@ -3,14 +3,14 @@ import { CodexQuotaError } from "./errors.mjs";
 import { PACKAGE_ROOT } from "./paths.mjs";
 import { readPackageMetadata } from "./commands/install.mjs";
 
-const HELP = `Codex Sidebar Quota (experimental Windows MVP)
+const HELP = `QuotaPeek for Codex (experimental Windows MVP)
 
 Usage:
-  codex-sidebar-quota install [--no-desktop] [--no-shortcuts] [--json]
-  codex-sidebar-quota start [--port PORT] [--foreground] [--json]
-  codex-sidebar-quota doctor [--live] [--json]
-  codex-sidebar-quota uninstall [--json]
-  codex-sidebar-quota version
+  quotapeek install [--no-desktop] [--no-shortcuts] [--json]
+  quotapeek start [--port PORT] [--foreground] [--json]
+  quotapeek doctor [--live] [--json]
+  quotapeek uninstall [--json]
+  quotapeek version
 
 The first cold start must go through "Codex + Quota" (or the start command)
 so the official Store process receives loopback CDP flags.
@@ -68,7 +68,7 @@ async function dispatch(parsed, io) {
       const result = await startCommand(parsed.flags);
       emitResult(result, jsonRequested(parsed.flags), io, () => {
         if (!result.ok) return emitHumanFailure(result, io);
-        io.stdout(`Codex Sidebar Quota started (daemon PID ${result.daemonPid}, CDP port ${result.port}).\n`);
+        io.stdout(`QuotaPeek for Codex started (daemon PID ${result.daemonPid}, CDP port ${result.port}).\n`);
       });
       return result;
     }
@@ -163,11 +163,11 @@ export function errorResult(error) {
 
 export function emitInstallHuman(result, io) {
   if (!result.ok) return emitHumanFailure(result, io);
-  io.stdout(`Installed Codex Sidebar Quota ${result.install.version} in ${result.install.engineRoot}\n`);
+  io.stdout(`Installed QuotaPeek for Codex ${result.install.version} in ${result.install.engineRoot}\n`);
   if (result.shortcuts?.skipped) {
-    io.stdout("Shortcuts were not created (--no-shortcuts). Start it with 'codex-sidebar-quota start'.\n");
+    io.stdout("Installation does not start Codex. Shortcuts were not created (--no-shortcuts); start it with 'quotapeek start'.\n");
   } else {
-    io.stdout("Launch it with the 'Codex + Quota' shortcut. CDP remains a same-user security boundary.\n");
+    io.stdout("Installation does not start Codex. Next, open the 'Codex + Quota' shortcut directly; you do not need to run 'quotapeek start'. CDP remains a same-user security boundary.\n");
   }
 }
 
@@ -178,9 +178,9 @@ export function emitDoctorHuman(result, formatDoctor, io) {
 
 export function emitUninstallHuman(result, io) {
   if (!result.ok) return emitHumanFailure(result, io);
-  io.stdout("Codex Sidebar Quota was uninstalled.\n");
+  io.stdout("QuotaPeek for Codex was uninstalled.\n");
   if (result.shortcuts?.skipped?.length) {
-    io.stdout(`Warning: ${result.shortcuts.skipped.length} same-name shortcut(s) were not owned by Codex Sidebar Quota and were left untouched.\n`);
+    io.stdout(`Warning: ${result.shortcuts.skipped.length} same-name shortcut(s) were not owned by QuotaPeek for Codex and were left untouched.\n`);
   }
   if (result.cdpMayStillBeOpen) {
     io.stdout("Codex is still running with CDP; fully exit and reopen the official app to close it.\n");

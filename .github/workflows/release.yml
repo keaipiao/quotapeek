@@ -167,6 +167,6 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             & gh release upload $tag $archive $checksum --clobber
           } else {
-            & gh release create $tag $archive $checksum --verify-tag --generate-notes --title "Codex Sidebar Quota $env:RELEASE_VERSION"
+            & gh release create $tag $archive $checksum --verify-tag --generate-notes --title "QuotaPeek for Codex $env:RELEASE_VERSION"
           }
           if ($LASTEXITCODE -ne 0) { throw "GitHub Release publication failed" }

@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve Codex Sidebar Quota. The project is intentionally
+Thanks for helping improve QuotaPeek for Codex. The project is intentionally
 small and conservative because it crosses a CDP security boundary and relies on
 private desktop-app structure.
 
@@ -32,7 +32,7 @@ control.
 For a local manual installation from the checkout:
 
 ```powershell
-node .\bin\codex-sidebar-quota.mjs install
+node .\bin\quotapeek.mjs install
 ```
 
 Fully exit the desktop app before testing a new cold start. Do not automate

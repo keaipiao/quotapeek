@@ -10,8 +10,8 @@ body:
   - type: input
     id: quota_version
     attributes:
-      label: Codex Sidebar Quota version
-      description: Run `npx.cmd --yes codex-sidebar-quota@latest version`, or give the exact archive version.
+      label: QuotaPeek version
+      description: Run `npx.cmd --yes quotapeek@latest version`, or give the exact archive version.
       placeholder: 0.2.0
     validations:
       required: true

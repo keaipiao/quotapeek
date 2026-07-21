@@ -8,6 +8,22 @@
   const NATIVE_HIDDEN_ATTR = "data-codex-quota-native-hidden";
   const GENERAL_BUCKET_ID = "codex";
   const SPARK_LIMIT_NAME = "gpt-5.3-codex-spark";
+  // Compatibility labels for public plans currently represented by the
+  // app-server wire enum. The wire value has no separate Pro multiplier field,
+  // so keep that current product mapping centralized here. Internal usage-based
+  // workspace variants and unknown future values stay hidden rather than being
+  // presented as inferred entitlements.
+  const PLAN_LABELS = Object.freeze({
+    free: "Free",
+    go: "Go",
+    plus: "Plus",
+    prolite: "Pro 5\u00d7",
+    pro: "Pro 20\u00d7",
+    team: "Team",
+    business: "Business",
+    enterprise: "Enterprise",
+    edu: "Edu",
+  });
   const STALE_AFTER_MS = 3 * 60 * 1000;
   const UNAVAILABLE_AFTER_MS = 15 * 60 * 1000;
   const HEARTBEAT_TIMEOUT_MS = 120 * 1000;
@@ -312,6 +328,13 @@
 
   function isSparkBucket(bucket) {
     return Boolean(bucket && canonicalIdentifier(bucket.name) === SPARK_LIMIT_NAME);
+  }
+
+  function formatPlanLabel(value) {
+    const normalized = safeText(value, null, 32);
+    if (!normalized) return null;
+    const key = normalized.toLowerCase();
+    return Object.prototype.hasOwnProperty.call(PLAN_LABELS, key) ? PLAN_LABELS[key] : null;
   }
 
   function selectGeneralBucket(buckets) {
@@ -807,8 +830,18 @@
       state.host.setAttribute("aria-label", messages.heading);
     }
 
+    const bucket = selectGeneralBucket(state.snapshot ? state.snapshot.buckets : []);
+    const planLabel = currentFreshness !== "loading"
+      && currentFreshness !== "unavailable"
+      && !state.cachedSnapshot
+      && bucket
+      ? formatPlanLabel(bucket.planType)
+      : null;
     const header = createElement("div", "quota-header");
+    const headingGroup = createElement("div", "quota-heading-group");
     const heading = createElement("span", "quota-heading", messages.heading);
+    headingGroup.appendChild(heading);
+    if (planLabel) headingGroup.appendChild(createElement("span", "quota-plan", `\u00b7 ${planLabel}`));
     const statusLabel = currentFreshness === "fresh"
       ? messages.statusFresh
       : currentFreshness === "loading"
@@ -817,7 +850,7 @@
           ? messages.statusRefreshing
           : currentFreshness === "stale" ? messages.statusStale : messages.statusUnavailable;
     const badge = createElement("span", `quota-badge quota-${currentFreshness}`, statusLabel);
-    header.appendChild(heading);
+    header.appendChild(headingGroup);
     header.appendChild(badge);
     panel.appendChild(header);
 
@@ -835,7 +868,6 @@
       return;
     }
 
-    const bucket = selectGeneralBucket(state.snapshot ? state.snapshot.buckets : []);
     if (!bucket) {
       panel.appendChild(createElement("div", "quota-empty", messages.generalUnavailable));
       return;
@@ -952,8 +984,11 @@
         gap: 10px;
       }
       .quota-header { min-height: 20px; }
-      .quota-heading { font-weight: 650; font-size: 12.5px; line-height: 1.35; letter-spacing: -.01em; white-space: nowrap; }
+      .quota-heading-group { display: flex; align-items: baseline; min-width: 0; overflow: hidden; gap: 5px; white-space: nowrap; }
+      .quota-heading { flex: none; font-weight: 650; font-size: 12.5px; line-height: 1.35; letter-spacing: -.01em; white-space: nowrap; }
+      .quota-plan { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--color-token-description-foreground, color-mix(in srgb, currentColor 62%, transparent)); font-size: 10.5px; font-weight: 600; line-height: 1.35; white-space: nowrap; }
       .quota-badge {
+        flex: none;
         border-radius: 999px;
         padding: 2px 6px;
         font-size: 10px;
@@ -1817,6 +1852,7 @@
       normalizeSnapshot,
       canonicalIdentifier,
       isSparkBucket,
+      formatPlanLabel,
       selectGeneralBucket,
       remainingTone,
       freshness,

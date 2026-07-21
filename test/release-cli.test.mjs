@@ -34,18 +34,20 @@ test("public package and executable names cannot invoke the unrelated codex-quot
   const lock = JSON.parse(await readFile(join(PACKAGE_ROOT, "package-lock.json"), "utf8"));
   const renderer = await readFile(join(PACKAGE_ROOT, "src", "renderer", "panel-inject.js"), "utf8");
   const client = await readFile(join(PACKAGE_ROOT, "src", "app-server", "client.mjs"), "utf8");
-  assert.equal(metadata.name, "codex-sidebar-quota");
+  assert.equal(metadata.name, "quotapeek");
   assert.deepEqual(metadata.os, ["win32"]);
   assert.deepEqual(metadata.cpu, ["x64"]);
-  assert.deepEqual(Object.keys(metadata.bin), ["codex-sidebar-quota"]);
-  assert.equal(metadata.bin["codex-sidebar-quota"], "./bin/codex-sidebar-quota.mjs");
+  assert.deepEqual(Object.keys(metadata.bin), ["quotapeek"]);
+  assert.equal(metadata.bin.quotapeek, "bin/quotapeek.mjs");
+  assert.equal(metadata.author, "keaipiao");
+  assert.equal(metadata.repository.url, "git+https://github.com/keaipiao/quotapeek.git");
   assert.ok(metadata.files.includes("README.zh-CN.md"));
   assert.equal(lock.version, metadata.version);
   assert.equal(lock.packages[""].version, metadata.version);
   assert.match(renderer, new RegExp(`const VERSION = ${JSON.stringify(metadata.version)}`));
   assert.match(client, new RegExp(`version: ${JSON.stringify(metadata.version)}`));
   assert.doesNotMatch(readme, /npx(?:\.cmd)?\s+(?:--yes\s+)?codex-quota(?:\s|@|$)/i);
-  assert.match(readme, /npx\.cmd --yes codex-sidebar-quota@latest install/);
+  assert.match(readme, /npx\.cmd --yes quotapeek@latest install/);
 });
 
 test("unknown commands produce a coded human error and a nonzero result", async () => {
@@ -93,7 +95,7 @@ test("--json produces one structured error result and marks failure", async () =
 });
 
 test("the published executable returns a nonzero status for structured and human errors", () => {
-  const entry = join(PACKAGE_ROOT, "bin", "codex-sidebar-quota.mjs");
+  const entry = join(PACKAGE_ROOT, "bin", "quotapeek.mjs");
   const json = spawnSync(process.execPath, [entry, "not-a-command", "--json"], { encoding: "utf8" });
   assert.equal(json.status, 1);
   assert.equal(JSON.parse(json.stdout).error.code, "E_UNKNOWN_COMMAND");
@@ -124,9 +126,22 @@ test("--no-shortcuts install output does not claim a shortcut was created", () =
     install: { version: "0.1.0", engineRoot: "C:\\runtime" },
     shortcuts: { skipped: true }
   }, io);
+  assert.match(capture.stdout, /Installation does not start Codex/);
   assert.match(capture.stdout, /Shortcuts were not created/);
-  assert.match(capture.stdout, /codex-sidebar-quota start/);
+  assert.match(capture.stdout, /quotapeek start/);
   assert.doesNotMatch(capture.stdout, /Launch it with/);
+});
+
+test("default install output says to open the shortcut without a second command", () => {
+  const { capture, io } = captureIo();
+  emitInstallHuman({
+    ok: true,
+    install: { version: "0.2.0", engineRoot: "C:\\runtime" },
+    shortcuts: { created: [] }
+  }, io);
+  assert.match(capture.stdout, /Installation does not start Codex/);
+  assert.match(capture.stdout, /open the 'Codex \+ Quota' shortcut directly/);
+  assert.match(capture.stdout, /do not need to run 'quotapeek start'/);
 });
 
 test("uninstall result preserves shortcut ownership mismatches for callers", async () => {

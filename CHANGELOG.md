@@ -4,10 +4,13 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] - Unreleased
+## [0.2.0] - 2026-07-21
 
 ### Added
 
+- The general quota header now shows a recognized reported plan, using current
+  compatibility labels such as Free, Plus, Pro 5×, and Pro 20×, while keeping
+  freshness visible.
 - Automatic English, Simplified Chinese, and Traditional Chinese panel
   localization. The active Codex React-Intl locale is preferred, unsupported
   locales fall back to English, and date/time formatting is locale-aware.
@@ -21,6 +24,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- The public project, npm package, and CLI are now named QuotaPeek
+  (`quotapeek`). Stable local runtime and shortcut identifiers remain
+  compatible with preview installations.
 - Renderer discovery and mount retries no longer impose long fixed waits during
   startup.
 - Provider startup is asynchronous so panel readiness is not blocked by the
