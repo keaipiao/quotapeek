@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,10 +12,15 @@ function runNpm(args, cwd) {
   const invocation = process.env.npm_execpath
     ? [process.env.npm_execpath, ...args]
     : ["/d", "/c", "npm.cmd", ...args];
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => key.toLowerCase() !== "npm_config_dry_run")
+  );
+  env.npm_config_dry_run = "false";
   assert.ok(executable, "npm or the Windows command processor is unavailable");
   return spawnSync(executable, invocation, {
     cwd,
-    encoding: "utf8"
+    encoding: "utf8",
+    env
   });
 }
 
@@ -40,6 +45,7 @@ test("the packed package installs only the codex-quota executable", async () => 
     assert.equal(packagedPaths.some((path) => path.startsWith("test/")), false);
 
     const archive = join(packRoot, result[0].filename);
+    await mkdir(installRoot);
     const install = runNpm(
       ["install", archive, "--prefix", installRoot, "--ignore-scripts", "--no-audit", "--no-fund", "--no-package-lock"],
       root

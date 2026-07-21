@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +13,24 @@ const VERSION = "0.4.0";
 const TAG = `v${VERSION}`;
 const ARCHIVE = `elonmark-codex-quota-${VERSION}.tgz`;
 const CHECKSUM = `${ARCHIVE}.sha256`;
+const WINDOWS_POWERSHELL = join(
+  process.env.SystemRoot ?? "C:\\Windows",
+  "System32", "WindowsPowerShell", "v1.0", "powershell.exe"
+);
+const POWERSHELL_7 = join(
+  process.env.ProgramFiles ?? "C:\\Program Files",
+  "PowerShell", "7", "pwsh.exe"
+);
+const POWERSHELL_HOSTS = [
+  { name: "PowerShell 7", executable: POWERSHELL_7, arguments: ["-NoProfile"] },
+  {
+    name: "Windows PowerShell 5.1",
+    executable: WINDOWS_POWERSHELL,
+    arguments: ["-NoProfile", "-ExecutionPolicy", "Bypass"]
+  }
+].filter(({ executable }) => existsSync(executable));
+
+assert.ok(POWERSHELL_HOSTS.length > 0, "a supported PowerShell host is required");
 
 const FAKE_GH = String.raw`
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -47,7 +66,12 @@ if (args[0] === "release" && args[1] === "view") {
     process.stderr.write("simulated release list failure");
     process.exitCode = 1;
   } else {
-    const releases = state.latestTag ? [{ tagName: state.latestTag, isLatest: true }] : [];
+    const releases = [
+      ...(state.latestTag ? [{ tagName: state.latestTag, isLatest: true }] : []),
+      ...state.publishedTags
+        .filter((tagName) => tagName !== state.latestTag)
+        .map((tagName) => ({ tagName, isLatest: false }))
+    ];
     save();
     process.stdout.write(JSON.stringify(releases));
   }
@@ -58,7 +82,14 @@ if (args[0] === "release" && args[1] === "view") {
 }
 `;
 
-async function fixture({ draft, immutable, latestTag, extraAsset = false, failReleaseList = false }) {
+async function fixture({
+  draft,
+  immutable,
+  latestTag,
+  publishedTags = [],
+  extraAsset = false,
+  failReleaseList = false
+}) {
   const root = await mkdtemp(join(tmpdir(), "codex-quota-release-helper-"));
   const assets = join(root, "assets");
   const remote = join(root, "remote");
@@ -77,6 +108,7 @@ async function fixture({ draft, immutable, latestTag, extraAsset = false, failRe
   const statePath = join(root, "state.json");
   const state = {
     latestTag,
+    publishedTags,
     failReleaseList,
     calls: [],
     release: {
@@ -95,11 +127,9 @@ async function fixture({ draft, immutable, latestTag, extraAsset = false, failRe
   return { root, assets, remote, fakeBin, statePath };
 }
 
-function runHelper(item, mode) {
-  const powershell = join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  return spawnSync(powershell, [
-    "-NoProfile",
-    "-ExecutionPolicy", "Bypass",
+function runHelper(item, mode, powershell = POWERSHELL_HOSTS[0]) {
+  return spawnSync(powershell.executable, [
+    ...powershell.arguments,
     "-File", join(PACKAGE_ROOT, ".github", "scripts", "reconcile-release.ps1"),
     "-Mode", mode,
     "-AssetsDirectory", item.assets,
@@ -136,7 +166,12 @@ test("finalizing an already published immutable release is a no-op for Latest", 
 });
 
 test("an older draft publishes without replacing a newer GitHub Latest", async () => {
-  const item = await fixture({ draft: true, immutable: false, latestTag: "v0.5.0" });
+  const item = await fixture({
+    draft: true,
+    immutable: false,
+    latestTag: "v0.5.0",
+    publishedTags: ["v0.3.1"]
+  });
   try {
     const result = runHelper(item, "finalize");
     assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -150,6 +185,27 @@ test("an older draft publishes without replacing a newer GitHub Latest", async (
     await rm(item.root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
 });
+
+for (const powershell of POWERSHELL_HOSTS) {
+  test(`multiple published releases are enumerated correctly on ${powershell.name}`, async () => {
+    const item = await fixture({
+      draft: true,
+      immutable: false,
+      latestTag: "v0.5.0",
+      publishedTags: ["v0.3.1", "v0.2.0"]
+    });
+    try {
+      const result = runHelper(item, "finalize", powershell);
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      const state = await readState(item);
+      const edit = state.calls.find((args) => args[0] === "release" && args[1] === "edit");
+      assert.ok(edit?.includes("--latest=false"));
+      assert.equal(state.latestTag, "v0.5.0");
+    } finally {
+      await rm(item.root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+}
 
 test("a newer draft becomes GitHub Latest and is immutable after publication", async () => {
   const item = await fixture({ draft: true, immutable: false, latestTag: "v0.3.1" });

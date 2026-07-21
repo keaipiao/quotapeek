@@ -19,6 +19,20 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Get-Sha256([string]$Path) {
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [System.IO.File]::OpenRead($Path)
+        try {
+            return ([System.BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+        } finally {
+            $stream.Dispose()
+        }
+    } finally {
+        $algorithm.Dispose()
+    }
+}
+
 if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or $Tag -ne "v$Version") {
     throw "Release tag and stable version do not match"
 }
@@ -40,7 +54,7 @@ if ($checksumFields.Count -ne 2 -or $checksumFields[1] -ne $archiveName) {
     throw "Checksum asset has an unexpected format or filename"
 }
 $expectedHash = $checksumFields[0].ToLowerInvariant()
-$actualHash = (Get-FileHash -LiteralPath $archive.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+$actualHash = Get-Sha256 $archive.FullName
 if ($expectedHash -notmatch '^[0-9a-f]{64}$' -or $actualHash -ne $expectedHash) {
     throw "Release archive SHA-256 mismatch"
 }
@@ -87,8 +101,8 @@ function Assert-ReleaseAssetHashes([object]$Release) {
         & gh release download $Tag --repo $Repository --pattern $localAsset.Name --dir $downloadRoot
         if ($LASTEXITCODE -ne 0) { throw "Could not download GitHub Release asset $($localAsset.Name)" }
         $downloaded = Join-Path $downloadRoot $localAsset.Name
-        $localHash = (Get-FileHash -LiteralPath $localAsset.FullName -Algorithm SHA256).Hash
-        $remoteHash = (Get-FileHash -LiteralPath $downloaded -Algorithm SHA256).Hash
+        $localHash = Get-Sha256 $localAsset.FullName
+        $remoteHash = Get-Sha256 $downloaded
         if ($localHash -ne $remoteHash) { throw "Existing GitHub Release asset differs: $($localAsset.Name)" }
     }
 }
@@ -137,7 +151,8 @@ if ($Mode -eq "finalize") {
             $ErrorActionPreference = $previousPreference
         }
         if ($ghExitCode -ne 0) { throw "Could not determine the current GitHub Latest release" }
-        $publishedReleases = @($publishedJson | ConvertFrom-Json)
+        $parsedPublishedReleases = $publishedJson | ConvertFrom-Json
+        $publishedReleases = @($parsedPublishedReleases | ForEach-Object { $_ })
         $latestReleases = @($publishedReleases | Where-Object { $_.isLatest -eq $true })
         if ($latestReleases.Count -gt 1) { throw "GitHub reported multiple Latest releases" }
         if ($latestReleases.Count -eq 0 -and $publishedReleases.Count -gt 0) {
