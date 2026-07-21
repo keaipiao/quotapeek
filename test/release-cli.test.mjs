@@ -28,7 +28,7 @@ function captureIo() {
   };
 }
 
-test("public package and executable names cannot invoke the unrelated codex-quota package", async () => {
+test("public package scope and executable names cannot invoke unrelated packages", async () => {
   const metadata = JSON.parse(await readFile(join(PACKAGE_ROOT, "package.json"), "utf8"));
   const readme = await readFile(join(PACKAGE_ROOT, "README.md"), "utf8");
   const lock = JSON.parse(await readFile(join(PACKAGE_ROOT, "package-lock.json"), "utf8"));
@@ -40,7 +40,7 @@ test("public package and executable names cannot invoke the unrelated codex-quot
     "docs/RELEASING.md",
     ".github/ISSUE_TEMPLATE/bug_report.yml"
   ].map((path) => readFile(join(PACKAGE_ROOT, path), "utf8")));
-  assert.equal(metadata.name, "codex-q");
+  assert.equal(metadata.name, "@elonmark/codex-quota");
   assert.deepEqual(metadata.os, ["win32"]);
   assert.deepEqual(metadata.cpu, ["x64"]);
   assert.deepEqual(Object.keys(metadata.bin), ["codex-q"]);
@@ -49,14 +49,17 @@ test("public package and executable names cannot invoke the unrelated codex-quot
   assert.equal(metadata.author, "keaipiao");
   assert.equal(metadata.repository.url, "git+https://github.com/keaipiao/codex-quota.git");
   assert.ok(metadata.files.includes("README.zh-CN.md"));
+  assert.equal(lock.name, metadata.name);
+  assert.equal(lock.packages[""].name, metadata.name);
   assert.equal(lock.version, metadata.version);
   assert.equal(lock.packages[""].version, metadata.version);
   assert.match(renderer, new RegExp(`const VERSION = ${JSON.stringify(metadata.version)}`));
   assert.match(client, new RegExp(`version: ${JSON.stringify(metadata.version)}`));
   for (const contents of publicDocs) {
     assert.doesNotMatch(contents, /npx(?:\.cmd)?\s+(?:--yes\s+)?codex-quota(?:\s|@|$)/i);
+    assert.doesNotMatch(contents, /npx(?:\.cmd)?\s+(?:--yes\s+)?codex-q(?:\s|@|$)/i);
   }
-  assert.match(readme, /npx\.cmd --yes codex-q@latest install/);
+  assert.match(readme, /npx\.cmd --yes @elonmark\/codex-quota@latest install/);
 });
 
 test("unknown commands produce a coded human error and a nonzero result", async () => {
@@ -84,8 +87,8 @@ test("the conventional global --version form returns the package version", async
   const { capture, io } = captureIo();
   const result = await main(["--version"], io);
   assert.equal(result.ok, true);
-  assert.equal(result.version, "0.3.0");
-  assert.equal(capture.stdout, "0.3.0\n");
+  assert.equal(result.version, "0.3.1");
+  assert.equal(capture.stdout, "0.3.1\n");
 });
 
 test("--json produces one structured error result and marks failure", async () => {
@@ -145,7 +148,7 @@ test("default install output says to open the shortcut without a second command"
   const { capture, io } = captureIo();
   emitInstallHuman({
     ok: true,
-    install: { version: "0.3.0", engineRoot: "C:\\runtime" },
+    install: { version: "0.3.1", engineRoot: "C:\\runtime" },
     shortcuts: { created: [] }
   }, io);
   assert.match(capture.stdout, /Installation does not start Codex/);

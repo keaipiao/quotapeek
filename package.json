@@ -1,6 +1,6 @@
 {
-  "name": "codex-q",
-  "version": "0.3.0",
+  "name": "@elonmark/codex-quota",
+  "version": "0.3.1",
   "description": "A local, no-tray quota panel for the Windows Codex desktop app.",
   "type": "module",
   "bin": {

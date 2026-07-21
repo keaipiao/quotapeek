@@ -20,7 +20,7 @@ Requirements: Windows 11 x64, the Microsoft Store Codex/ChatGPT app
 4. Run:
 
    ```powershell
-   npx.cmd --yes codex-q@latest install
+   npx.cmd --yes @elonmark/codex-quota@latest install
    ```
 
 5. When installation succeeds, directly open **Codex + Quota** from the
@@ -53,7 +53,7 @@ Codex Quota itself, run this from any PowerShell directory, fully exit Codex,
 and then reopen **Codex + Quota**:
 
 ```powershell
-npx.cmd --yes codex-q@latest install
+npx.cmd --yes @elonmark/codex-quota@latest install
 ```
 
 An update safely replaces shortcuts created by this project, including the old
@@ -69,7 +69,7 @@ If the panel does not appear:
 3. Run from any PowerShell directory:
 
    ```powershell
-   npx.cmd --yes codex-q@latest doctor --live
+   npx.cmd --yes @elonmark/codex-quota@latest doctor --live
    ```
 
 If the hidden launch does nothing, inspect
@@ -79,7 +79,7 @@ the contents of `%LOCALAPPDATA%\CodexQuota`, or unreviewed raw logs.
 As a terminal-only alternative to the shortcut, run:
 
 ```powershell
-npx.cmd --yes codex-q@latest start
+npx.cmd --yes @elonmark/codex-quota@latest start
 ```
 
 ## Uninstall
@@ -88,7 +88,7 @@ Run from any PowerShell directory, then fully exit Codex and reopen it through
 the official shortcut:
 
 ```powershell
-npx.cmd --yes codex-q@latest uninstall
+npx.cmd --yes @elonmark/codex-quota@latest uninstall
 ```
 
 ## Security and development

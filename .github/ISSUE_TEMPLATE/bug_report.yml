@@ -11,8 +11,8 @@ body:
     id: quota_version
     attributes:
       label: Codex Quota version
-      description: Run `npx.cmd --yes codex-q@latest version`, or give the exact archive version.
-      placeholder: 0.3.0
+      description: Run `npx.cmd --yes @elonmark/codex-quota@latest version`, or give the exact archive version.
+      placeholder: 0.3.1
     validations:
       required: true
 

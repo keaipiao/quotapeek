@@ -4,12 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-07-21
+
+### Fixed
+
+- The npm package now publishes from the maintainer-owned scope as
+  `@elonmark/codex-quota`, because npm's similarity protection rejected the
+  unscoped `codex-q` name in favor of the existing `codexq` package. The
+  installed executable remains `codex-q`.
+
 ## [0.3.0] - 2026-07-21
 
 ### Changed
 
 - The repository and public project are now named **Codex Quota** under
-  `keaipiao/codex-quota`; the npm package and CLI are now `codex-q`.
+  `keaipiao/codex-quota`; the release archive package name and CLI were changed
+  to `codex-q`.
 - The required cold-start shortcut is again named **Codex + Quota**, while
   owned **QuotaPeek for Codex** shortcuts are migrated safely and unrelated
   same-name shortcuts remain untouched.
