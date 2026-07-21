@@ -1,0 +1,83 @@
+name: Bug report
+description: Report a reproducible installation, startup, quota, or layout problem.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This unofficial project supports Windows 11 x64 and the Microsoft Store `OpenAI.Codex` package. Do not include tokens, email addresses, account data, conversations, `auth.json`, or raw logs. Report security issues privately through the repository Security tab instead.
+
+  - type: input
+    id: quota_version
+    attributes:
+      label: Codex Sidebar Quota version
+      description: Run `npx.cmd --yes codex-sidebar-quota@latest version`, or give the exact archive version.
+      placeholder: 0.2.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install_source
+    attributes:
+      label: Installation source
+      options:
+        - npm latest
+        - npm exact version
+        - GitHub Release tgz
+        - Source checkout
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Windows edition/build, x64 architecture, Node.js version, and Store app version.
+      placeholder: Windows 11 24H2 x64; Node 22.x; OpenAI.Codex ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Include whether the desktop app was fully exited before using Codex + Quota.
+      placeholder: |
+        1. Fully exit the app
+        2. Launch Codex + Quota
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Sanitized doctor output
+      description: Run `doctor` or `doctor --live`. Inspect the complete output and remove usernames, full paths, PIDs, and any other identifying details before pasting it.
+      render: text
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Safety checks
+      options:
+        - label: I fully exited the desktop app and reproduced the issue from a cold Codex + Quota start.
+          required: true
+        - label: I removed credentials, account details, conversations, local usernames, and other private data.
+          required: true
+        - label: This is not a security vulnerability; security reports go through GitHub Private Vulnerability Reporting.
+          required: true

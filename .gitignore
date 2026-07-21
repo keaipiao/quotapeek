@@ -1,0 +1,33 @@
+# Dependencies and coverage
+node_modules/
+coverage/
+.nyc_output/
+
+# Generated packages and release output
+*.tgz
+dist/
+.release-smoke/
+
+# Local diagnostics and process state
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.pid
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+auth.json
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*~

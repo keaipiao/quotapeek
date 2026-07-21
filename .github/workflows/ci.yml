@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Windows / Node ${{ matrix.node }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+
+      - name: Verify lockfile policy
+        shell: pwsh
+        run: |
+          if (Test-Path package-lock.json) {
+            npm.cmd ci --ignore-scripts --no-audit --no-fund
+            if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
+          } elseif ((Get-Content package.json -Raw | ConvertFrom-Json).dependencies) {
+            throw "Runtime dependencies require a committed package-lock.json"
+          }
+
+      - name: Check syntax
+        run: npm.cmd run check
+
+      - name: Run tests
+        run: npm.cmd test
+
+      - name: Inspect package contents
+        run: npm.cmd pack --dry-run --ignore-scripts

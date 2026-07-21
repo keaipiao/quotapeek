@@ -1,0 +1,47 @@
+name: Feature request
+description: Propose a focused improvement to the in-sidebar quota companion.
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep proposals within the project's local, no-tray, in-sidebar scope. The project is unofficial and must preserve its CDP and data-minimization boundaries.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user problem is not solved today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the smallest useful behavior, including relevant English, Simplified Chinese, and Traditional Chinese UI text.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: textarea
+    id: risk
+    attributes:
+      label: Security and compatibility impact
+      description: Could this broaden CDP access, persist more data, rely on new private DOM/app-server behavior, or add a remote service?
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Scope checks
+      options:
+        - label: This request does not require telemetry, remote code/selectors, credential access, or automatic termination of the desktop app.
+          required: true
+        - label: This is not a private security report.
+          required: true

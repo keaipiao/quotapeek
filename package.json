@@ -1,0 +1,47 @@
+{
+  "name": "codex-sidebar-quota",
+  "version": "0.2.0",
+  "description": "A local, no-tray, localized quota panel for the Windows Codex/ChatGPT desktop client.",
+  "type": "module",
+  "bin": {
+    "codex-sidebar-quota": "./bin/codex-sidebar-quota.mjs"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/",
+    "src/",
+    "windows/",
+    "README.md",
+    "README.zh-CN.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "CHANGELOG.md",
+    "docs/RELEASING.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node scripts/check-syntax.mjs",
+    "prepack": "npm run check && npm test"
+  },
+  "keywords": [
+    "codex",
+    "chatgpt",
+    "quota",
+    "windows",
+    "cdp"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}
