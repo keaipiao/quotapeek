@@ -1,12 +1,8 @@
-<p align="center">
-  <img src="windows/assets/quotapeek.png" width="96" alt="QuotaPeek icon">
-</p>
-
-# QuotaPeek for Codex
+# Codex Quota
 
 [简体中文](README.zh-CN.md)
 
-QuotaPeek adds a compact, read-only quota panel to the bottom of the Windows
+Codex Quota adds a compact, read-only quota panel to the bottom of the Windows
 Codex/ChatGPT sidebar. It shows the general allowance without covering
 conversations or the account menu, and it has no tray icon or separate window.
 
@@ -24,17 +20,17 @@ Requirements: Windows 11 x64, the Microsoft Store Codex/ChatGPT app
 4. Run:
 
    ```powershell
-   npx.cmd --yes quotapeek@latest install
+   npx.cmd --yes codex-q@latest install
    ```
 
-5. When installation succeeds, directly open **QuotaPeek for Codex** from the
+5. When installation succeeds, directly open **Codex + Quota** from the
    Desktop or Start menu.
 
 The install command creates the shortcuts but does **not** launch Codex. There
-is no extra `npx ... start` step. QuotaPeek is stored under
+is no extra `npx ... start` step. Codex Quota is stored under
 `%LOCALAPPDATA%\CodexQuota`; you do not need to open that directory.
 
-For every future cold start, use **QuotaPeek for Codex**. If Codex is already
+For every future cold start, use **Codex + Quota**. If Codex is already
 running, its official icon can still bring the same process to the foreground.
 
 ## What it shows
@@ -47,32 +43,33 @@ running, its official icon can still bring the same process to the foreground.
 
 The panel follows the Codex interface language automatically. English,
 Simplified Chinese, and Traditional Chinese are built in; other languages fall
-back to English. When usable data is available, QuotaPeek hides the equivalent
+back to English. When usable data is available, Codex Quota hides the equivalent
 native footer quota.
 
 ## Update
 
-Routine Codex desktop updates require no QuotaPeek reinstall. To update
-QuotaPeek itself, run this from any PowerShell directory, fully exit Codex, and
-then reopen **QuotaPeek for Codex**:
+Routine Codex desktop updates require no Codex Quota reinstall. To update
+Codex Quota itself, run this from any PowerShell directory, fully exit Codex,
+and then reopen **Codex + Quota**:
 
 ```powershell
-npx.cmd --yes quotapeek@latest install
+npx.cmd --yes codex-q@latest install
 ```
 
 An update safely replaces shortcuts created by this project, including the old
-**Codex + Quota** name. Same-name shortcuts not owned by QuotaPeek are preserved.
+**QuotaPeek for Codex** name. Same-name shortcuts not owned by Codex Quota are
+preserved.
 
 ## Troubleshooting
 
 If the panel does not appear:
 
 1. Fully exit Codex/ChatGPT; check Task Manager if needed.
-2. Cold-start it through **QuotaPeek for Codex**, not the official shortcut.
+2. Cold-start it through **Codex + Quota**, not the official shortcut.
 3. Run from any PowerShell directory:
 
    ```powershell
-   npx.cmd --yes quotapeek@latest doctor --live
+   npx.cmd --yes codex-q@latest doctor --live
    ```
 
 If the hidden launch does nothing, inspect
@@ -82,7 +79,7 @@ the contents of `%LOCALAPPDATA%\CodexQuota`, or unreviewed raw logs.
 As a terminal-only alternative to the shortcut, run:
 
 ```powershell
-npx.cmd --yes quotapeek@latest start
+npx.cmd --yes codex-q@latest start
 ```
 
 ## Uninstall
@@ -91,12 +88,12 @@ Run from any PowerShell directory, then fully exit Codex and reopen it through
 the official shortcut:
 
 ```powershell
-npx.cmd --yes quotapeek@latest uninstall
+npx.cmd --yes codex-q@latest uninstall
 ```
 
 ## Security and development
 
-QuotaPeek does not modify the Store package, `app.asar`, Codex configuration,
+Codex Quota does not modify the Store package, `app.asar`, Codex configuration,
 or account credentials. It uses a random loopback CDP port and the official
 local app-server. See [SECURITY.md](SECURITY.md) for the security boundary.
 

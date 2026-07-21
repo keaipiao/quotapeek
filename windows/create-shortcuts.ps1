@@ -14,11 +14,13 @@ $ProgressPreference = "SilentlyContinue"
 $WarningPreference = "SilentlyContinue"
 $InformationPreference = "SilentlyContinue"
 
-$ManagedDescription = "Managed by QuotaPeek for Codex: start Codex with the local quota panel"
-$PreviousManagedDescription = "Managed by codex-sidebar-quota: start Codex with the local quota panel"
+$ManagedDescription = "Managed by Codex Quota: start Codex with the local quota panel"
+$QuotaPeekManagedDescription = "Managed by QuotaPeek for Codex: start Codex with the local quota panel"
+$SidebarManagedDescription = "Managed by codex-sidebar-quota: start Codex with the local quota panel"
+$ManagedDescriptions = @($ManagedDescription, $QuotaPeekManagedDescription, $SidebarManagedDescription)
 $LegacyDescription = "Start the official Codex client with the local quota panel"
-$CurrentShortcutName = "QuotaPeek for Codex.lnk"
-$LegacyShortcutName = "Codex + Quota.lnk"
+$CurrentShortcutName = "Codex + Quota.lnk"
+$LegacyShortcutNames = @("QuotaPeek for Codex.lnk")
 $backupRoot = $null
 
 function Write-Result([object]$Value) {
@@ -44,14 +46,6 @@ function Same-Path([string]$Left, [string]$Right) {
     } catch { return $false }
 }
 
-function Is-UnderPath([string]$Child, [string]$Parent) {
-    try {
-        $childPath = Normalize-Path $Child
-        $parentPath = Normalize-Path $Parent
-        return $childPath.StartsWith($parentPath + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)
-    } catch { return $false }
-}
-
 function Quote-ShortcutArgument([string]$Value) {
     if ($Value.Contains('"')) { throw "Shortcut paths must not contain quote characters." }
     return '"' + $Value + '"'
@@ -67,9 +61,9 @@ function Build-Arguments([string]$WorkingDirectory, [string]$RuntimeNode) {
 function Test-NewManagedShortcut([object]$Shortcut, [string]$ManagedEngines, [string]$PowerShellPath) {
     try {
         $working = Normalize-Path ([string]$Shortcut.WorkingDirectory)
-        if (-not (Is-UnderPath $working $ManagedEngines)) { return $false }
+        if (-not (Same-Path (Split-Path -Parent $working) $ManagedEngines)) { return $false }
         if (-not (Same-Path ([string]$Shortcut.TargetPath) $PowerShellPath)) { return $false }
-        if ([string]$Shortcut.Description -notin @($ManagedDescription, $PreviousManagedDescription)) { return $false }
+        if ([string]$Shortcut.Description -notin $ManagedDescriptions) { return $false }
 
         $helper = Normalize-Path (Join-Path $working "windows\hidden-launch.ps1")
         $prefix = "-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File " +
@@ -84,7 +78,7 @@ function Test-NewManagedShortcut([object]$Shortcut, [string]$ManagedEngines, [st
 function Test-LegacyManagedShortcut([object]$Shortcut, [string]$ManagedEngines) {
     try {
         $working = Normalize-Path ([string]$Shortcut.WorkingDirectory)
-        if (-not (Is-UnderPath $working $ManagedEngines)) { return $false }
+        if (-not (Same-Path (Split-Path -Parent $working) $ManagedEngines)) { return $false }
         if ([System.IO.Path]::GetFileName([string]$Shortcut.TargetPath) -ine "node.exe") { return $false }
         if ([string]$Shortcut.Description -ne $LegacyDescription) { return $false }
         $entry = Normalize-Path (Join-Path $working "bin\codex-quota.mjs")
@@ -109,7 +103,7 @@ try {
     $resolvedNode = Normalize-Path ((Resolve-Path -LiteralPath $NodePath -ErrorAction Stop).Path)
     $entryPoint = Normalize-Path (Join-Path $resolvedEngine "bin\codex-quota.mjs")
     $launchHelper = Normalize-Path (Join-Path $resolvedEngine "windows\hidden-launch.ps1")
-    $iconPath = Normalize-Path (Join-Path $resolvedEngine "windows\assets\quotapeek.ico")
+    $iconPath = Normalize-Path (Join-Path $resolvedEngine "windows\assets\codex-quota.ico")
     if (-not (Test-Path -LiteralPath $entryPoint -PathType Leaf)) {
         Throw-ShortcutError "E_ENTRY_POINT" "The installed quota-panel entry point was not found." @{ path = $entryPoint }
     }
@@ -117,7 +111,7 @@ try {
         Throw-ShortcutError "E_LAUNCH_HELPER" "The hidden-launch helper was not found." @{ path = $launchHelper }
     }
     if (-not (Test-Path -LiteralPath $iconPath -PathType Leaf)) {
-        Throw-ShortcutError "E_SHORTCUT_ICON" "The QuotaPeek shortcut icon was not found." @{ path = $iconPath }
+        Throw-ShortcutError "E_SHORTCUT_ICON" "The Codex Quota shortcut icon was not found." @{ path = $iconPath }
     }
     if ([System.IO.Path]::GetFileName($resolvedNode) -ine "node.exe") {
         Throw-ShortcutError "E_NODE_PATH" "NodePath must resolve to node.exe."
@@ -141,10 +135,11 @@ try {
     # Always inspect both legacy locations during an upgrade. This removes only
     # links whose target, arguments, working directory, and ownership marker all
     # bind them to this managed product root. A same-name user link is preserved.
-    $legacyDestinations = @(
-        (Join-Path $programs $LegacyShortcutName),
-        (Join-Path $desktopPath $LegacyShortcutName)
-    )
+    $legacyDestinations = @()
+    foreach ($shortcutName in $LegacyShortcutNames) {
+        $legacyDestinations += Join-Path $programs $shortcutName
+        $legacyDestinations += Join-Path $desktopPath $shortcutName
+    }
 
     $shell = New-Object -ComObject WScript.Shell
     $plans = @()
@@ -161,7 +156,7 @@ try {
                 (Same-Path ([string]$existing.WorkingDirectory) $resolvedEngine) -and
                 ([string]$existing.Description -eq $ManagedDescription)
             if (-not $isCurrent -and -not (Test-ManagedShortcut $existing $managedEngines $powerShellPath)) {
-                Throw-ShortcutError "E_SHORTCUT_CONFLICT" "A same-name shortcut exists but is not owned by QuotaPeek for Codex." @{ path = $destination }
+                Throw-ShortcutError "E_SHORTCUT_CONFLICT" "A same-name shortcut exists but is not owned by Codex Quota." @{ path = $destination }
             }
         }
         $plans += [pscustomobject]@{ destination = $destination; existed = $existed; backup = $null }
@@ -181,7 +176,7 @@ try {
 
     $mutablePlans = @($plans | Where-Object { $_.existed }) + @($legacyPlans)
     if ($mutablePlans.Count -gt 0) {
-        $backupRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("codex-sidebar-quota-create-" + [Guid]::NewGuid().ToString("N"))
+        $backupRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("codex-quota-create-" + [Guid]::NewGuid().ToString("N"))
         New-Item -ItemType Directory -Path $backupRoot | Out-Null
         for ($index = 0; $index -lt $mutablePlans.Count; $index++) {
             $backup = Join-Path $backupRoot ($index.ToString() + ".lnk")

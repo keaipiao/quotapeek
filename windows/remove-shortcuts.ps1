@@ -12,10 +12,12 @@ $ProgressPreference = "SilentlyContinue"
 $WarningPreference = "SilentlyContinue"
 $InformationPreference = "SilentlyContinue"
 
-$ManagedDescription = "Managed by QuotaPeek for Codex: start Codex with the local quota panel"
-$PreviousManagedDescription = "Managed by codex-sidebar-quota: start Codex with the local quota panel"
+$ManagedDescription = "Managed by Codex Quota: start Codex with the local quota panel"
+$QuotaPeekManagedDescription = "Managed by QuotaPeek for Codex: start Codex with the local quota panel"
+$SidebarManagedDescription = "Managed by codex-sidebar-quota: start Codex with the local quota panel"
+$ManagedDescriptions = @($ManagedDescription, $QuotaPeekManagedDescription, $SidebarManagedDescription)
 $LegacyDescription = "Start the official Codex client with the local quota panel"
-$ShortcutNames = @("QuotaPeek for Codex.lnk", "Codex + Quota.lnk")
+$ShortcutNames = @("Codex + Quota.lnk", "QuotaPeek for Codex.lnk")
 $backupRoot = $null
 
 function Write-Result([object]$Value) {
@@ -41,14 +43,6 @@ function Same-Path([string]$Left, [string]$Right) {
     } catch { return $false }
 }
 
-function Is-UnderPath([string]$Child, [string]$Parent) {
-    try {
-        $childPath = Normalize-Path $Child
-        $parentPath = Normalize-Path $Parent
-        return $childPath.StartsWith($parentPath + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)
-    } catch { return $false }
-}
-
 function Quote-ShortcutArgument([string]$Value) {
     if ($Value.Contains('"')) { throw "Shortcut paths must not contain quote characters." }
     return '"' + $Value + '"'
@@ -57,9 +51,9 @@ function Quote-ShortcutArgument([string]$Value) {
 function Test-NewManagedShortcut([object]$Shortcut, [string]$ManagedEngines, [string]$PowerShellPath) {
     try {
         $working = Normalize-Path ([string]$Shortcut.WorkingDirectory)
-        if (-not (Is-UnderPath $working $ManagedEngines)) { return $false }
+        if (-not (Same-Path (Split-Path -Parent $working) $ManagedEngines)) { return $false }
         if (-not (Same-Path ([string]$Shortcut.TargetPath) $PowerShellPath)) { return $false }
-        if ([string]$Shortcut.Description -notin @($ManagedDescription, $PreviousManagedDescription)) { return $false }
+        if ([string]$Shortcut.Description -notin $ManagedDescriptions) { return $false }
         $helper = Normalize-Path (Join-Path $working "windows\hidden-launch.ps1")
         $prefix = "-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File " +
             (Quote-ShortcutArgument $helper) + " -EngineRoot " + (Quote-ShortcutArgument $working) + " -NodePath `""
@@ -73,7 +67,7 @@ function Test-NewManagedShortcut([object]$Shortcut, [string]$ManagedEngines, [st
 function Test-LegacyManagedShortcut([object]$Shortcut, [string]$ManagedEngines) {
     try {
         $working = Normalize-Path ([string]$Shortcut.WorkingDirectory)
-        if (-not (Is-UnderPath $working $ManagedEngines)) { return $false }
+        if (-not (Same-Path (Split-Path -Parent $working) $ManagedEngines)) { return $false }
         if ([System.IO.Path]::GetFileName([string]$Shortcut.TargetPath) -ine "node.exe") { return $false }
         if ([string]$Shortcut.Description -ne $LegacyDescription) { return $false }
         $entry = Normalize-Path (Join-Path $working "bin\codex-quota.mjs")
@@ -119,7 +113,7 @@ try {
 
     # Backups make removal transactional if deleting a later owned shortcut fails.
     if ($owned.Count -gt 0) {
-        $backupRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("codex-sidebar-quota-shortcuts-" + [Guid]::NewGuid().ToString("N"))
+        $backupRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("codex-quota-shortcuts-" + [Guid]::NewGuid().ToString("N"))
         New-Item -ItemType Directory -Path $backupRoot | Out-Null
         for ($index = 0; $index -lt $owned.Count; $index++) {
             Copy-Item -LiteralPath $owned[$index] -Destination (Join-Path $backupRoot ($index.ToString() + ".lnk")) -Force

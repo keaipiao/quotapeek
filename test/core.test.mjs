@@ -51,10 +51,10 @@ test("installer stages a source-independent runtime without shortcuts", async ()
     });
     assert.equal(result.ok, true);
     const installed = await getInstalledRuntime({ env });
-    assert.equal(installed.version, "0.2.1");
+    assert.equal(installed.version, "0.3.0");
     const bin = await readFile(join(installed.engineRoot, "bin", "codex-quota.mjs"), "utf8");
     assert.match(bin, /src\/cli\.mjs/);
-    const icon = await readFile(join(installed.engineRoot, "windows", "assets", "quotapeek.ico"));
+    const icon = await readFile(join(installed.engineRoot, "windows", "assets", "codex-quota.ico"));
     assert.ok(icon.length > 0);
     const paths = getPaths(env);
     assert.equal(installed.engineRoot.startsWith(paths.engines), true);
@@ -73,7 +73,7 @@ test("installed runtime verification fails closed after a shipped byte changes",
       noShortcuts: true,
       allowNonWindows: true
     });
-    await appendFile(join(result.install.engineRoot, "windows", "assets", "quotapeek.ico"), "tampered");
+    await appendFile(join(result.install.engineRoot, "windows", "assets", "codex-quota.ico"), "tampered");
     await assert.rejects(
       getInstalledRuntime({ env }),
       (error) => error?.code === "E_RUNTIME_INTEGRITY"

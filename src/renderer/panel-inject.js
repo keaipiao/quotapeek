@@ -2,7 +2,7 @@
   "use strict";
 
   const GLOBAL_KEY = "__CODEX_QUOTA_PANEL__";
-  const VERSION = "0.2.1";
+  const VERSION = "0.3.0";
   const HOST_ID = "codex-quota-panel";
   const SIDEBAR_SELECTOR = "aside.app-shell-left-panel";
   const NATIVE_HIDDEN_ATTR = "data-codex-quota-native-hidden";

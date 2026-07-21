@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-07-21
+
+### Changed
+
+- The repository and public project are now named **Codex Quota** under
+  `keaipiao/codex-quota`; the npm package and CLI are now `codex-q`.
+- The required cold-start shortcut is again named **Codex + Quota**, while
+  owned **QuotaPeek for Codex** shortcuts are migrated safely and unrelated
+  same-name shortcuts remain untouched.
+- The shortcut now uses the Reserve Plane icon as a restrained launcher marker,
+  and the README no longer presents a separate product logo.
+
 ## [0.2.1] - 2026-07-21
 
 ### Added

@@ -1,19 +1,18 @@
 # Security policy
 
-QuotaPeek for Codex is an unofficial local companion that deliberately enables
+Codex Quota is an unofficial local companion that deliberately enables
 a loopback Chrome DevTools Protocol endpoint in the official desktop process.
 Please understand this boundary before installing it.
 
 ## Supported versions
 
-Security fixes are provided only for the latest released patch in the `0.2.x`
+Security fixes are provided only for the latest released patch in the `0.3.x`
 line.
 
 | Version | Supported |
 | --- | --- |
-| Latest `0.2.x` | Yes |
-| Older `0.2.x` patches | No; update first |
-| `0.1.x` and earlier | No |
+| Latest `0.3.x` | Yes |
+| `0.2.x` and earlier | No; update first |
 
 Because the project is pre-1.0 and depends on private desktop internals,
 compatibility fixes may require upgrading rather than backporting.
@@ -28,7 +27,7 @@ maintainers until coordinated disclosure.
 
 Include:
 
-- the affected QuotaPeek version;
+- the affected Codex Quota version;
 - Windows, Node.js, and Store app versions;
 - a minimal reproduction and expected impact;
 - whether another same-user process is required;

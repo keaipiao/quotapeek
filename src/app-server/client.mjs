@@ -57,8 +57,8 @@ export class AppServerClient extends EventEmitter {
       closeGraceMs: DEFAULT_CLOSE_GRACE_MS,
       clientInfo: {
         name: "codex-quota",
-        title: "QuotaPeek for Codex",
-        version: "0.2.1"
+        title: "Codex Quota",
+        version: "0.3.0"
       },
       ...options
     };

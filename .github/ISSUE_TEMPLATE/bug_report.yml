@@ -10,9 +10,9 @@ body:
   - type: input
     id: quota_version
     attributes:
-      label: QuotaPeek version
-      description: Run `npx.cmd --yes quotapeek@latest version`, or give the exact archive version.
-      placeholder: 0.2.1
+      label: Codex Quota version
+      description: Run `npx.cmd --yes codex-q@latest version`, or give the exact archive version.
+      placeholder: 0.3.0
     validations:
       required: true
 
@@ -41,10 +41,10 @@ body:
     id: steps
     attributes:
       label: Reproduction steps
-      description: Include whether the desktop app was fully exited before using QuotaPeek for Codex.
+      description: Include whether the desktop app was fully exited before using Codex + Quota.
       placeholder: |
         1. Fully exit the app
-        2. Launch QuotaPeek for Codex
+        2. Launch Codex + Quota
         3. ...
     validations:
       required: true
@@ -75,7 +75,7 @@ body:
     attributes:
       label: Safety checks
       options:
-        - label: I fully exited the desktop app and reproduced the issue from a cold QuotaPeek for Codex start.
+        - label: I fully exited the desktop app and reproduced the issue from a cold Codex + Quota start.
           required: true
         - label: I removed credentials, account details, conversations, local usernames, and other private data.
           required: true

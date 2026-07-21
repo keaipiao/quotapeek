@@ -764,7 +764,7 @@ test("a unique native footer quota is hidden only while the injected general quo
   assert.equal(fresh.nativeQuotaHiddenCount, 1);
   assert.equal(nativeQuota.style.display, "none");
   assert.equal(nativeQuota.style.getPropertyPriority("display"), "important");
-  assert.equal(nativeQuota.getAttribute("data-codex-quota-native-hidden"), "0.2.1");
+  assert.equal(nativeQuota.getAttribute("data-codex-quota-native-hidden"), "0.3.0");
   assert.notEqual(unrelated.style.display, "none");
   assert.notEqual(environment.accountButton.style.display, "none");
 
@@ -774,7 +774,7 @@ test("a unique native footer quota is hidden only while the injected general quo
   assert.equal(repaired.nativeQuotaHiddenCount, 1);
   assert.equal(nativeQuota.style.display, "none");
   assert.equal(nativeQuota.style.getPropertyPriority("display"), "important");
-  assert.equal(nativeQuota.getAttribute("data-codex-quota-native-hidden"), "0.2.1");
+  assert.equal(nativeQuota.getAttribute("data-codex-quota-native-hidden"), "0.3.0");
 
   const unavailable = api.unavailable({ reason: "temporarily unavailable" });
   assert.equal(unavailable.nativeQuotaHiddenCount, 0);

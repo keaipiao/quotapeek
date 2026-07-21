@@ -1,17 +1,16 @@
 # Release guide
 
-This checklist prepares the current `0.2.1` release and subsequent
+This checklist prepares the current `0.3.0` release and subsequent
 releases. Run release commands from PowerShell on a clean Windows checkout.
 
 ## One-time repository setup
 
-- [ ] Create the public `keaipiao/quotapeek` GitHub repository without asking
-      GitHub to generate another README, license, or `.gitignore`.
-- [ ] Set `https://github.com/keaipiao/quotapeek.git` as `origin`, push the
+- [ ] Confirm the public repository is `keaipiao/codex-quota`.
+- [ ] Set `https://github.com/keaipiao/codex-quota.git` as `origin`, push the
       default branch, and verify `git remote -v` before adding a release tag.
 - [ ] Confirm `repository`, `homepage`, and `bugs` in `package.json` point to
-      `keaipiao/quotapeek`.
-- [ ] Confirm the unscoped npm name `quotapeek` is available and owned by the
+      `keaipiao/codex-quota`.
+- [ ] Confirm the unscoped npm name `codex-q` is available and owned by the
       intended npm maintainer before the first publish.
 - [ ] Confirm the package `author`/maintainer metadata and public contact policy.
 - [ ] Enable GitHub Private Vulnerability Reporting under repository security
@@ -34,7 +33,7 @@ consume a long-lived `NPM_TOKEN` secret.
 ### Bootstrap a brand-new npm package
 
 npm requires a package to exist before a Trusted Publisher can be attached to
-it. If `quotapeek` has never been published:
+it. If `codex-q` has never been published:
 
 1. Leave `PUBLISH_NPM` absent or `false` and publish the first GitHub Release.
 2. Download its `.tgz` and `.sha256` assets and verify the checksum.
@@ -42,7 +41,7 @@ it. If `quotapeek` has never been published:
 4. Publish that exact downloaded archive rather than repacking the checkout:
 
    ```powershell
-   npm.cmd publish .\quotapeek-0.2.1.tgz --access public --provenance=false
+   npm.cmd publish .\codex-q-0.3.0.tgz --access public --provenance=false
    ```
 
    The one-time `--provenance=false` overrides the package default because a
@@ -58,11 +57,11 @@ can change independently of this project.
 
 ## Prepare a release
 
-1. Choose the next version. The current release is `0.2.1`.
+1. Choose the next version. The current release is `0.3.0`.
 2. Update the version in `package.json` without creating a tag yet:
 
    ```powershell
-   npm.cmd version 0.2.1 --no-git-tag-version --allow-same-version
+   npm.cmd version 0.3.0 --no-git-tag-version --allow-same-version
    ```
 
 3. Change the matching `CHANGELOG.md` heading from `Unreleased` to the release
@@ -109,13 +108,13 @@ After the release commit is merged on the default branch:
 ```powershell
 git switch <default-branch>
 git pull --ff-only
-git tag -a v0.2.1 -m "QuotaPeek 0.2.1"
-git push origin v0.2.1
+git tag -a v0.3.0 -m "Codex Quota 0.3.0"
+git push origin v0.3.0
 ```
 
 The tag workflow:
 
-1. verifies that `v0.2.1` exactly matches `package.json` version `0.2.1`;
+1. verifies that `v0.3.0` exactly matches `package.json` version `0.3.0`;
 2. runs syntax checks and the complete test suite on Node.js 24;
 3. creates the npm `.tgz` and a `.sha256` checksum;
 4. publishes to npm through OIDC only when `PUBLISH_NPM=true`;
@@ -131,11 +130,11 @@ tag. If a release contains a defect, publish a new patch.
 - [ ] On a clean Windows 11 x64 user profile with Node.js 22+, run:
 
   ```powershell
-  npx.cmd --yes quotapeek@0.2.1 install
-  npx.cmd --yes quotapeek@0.2.1 doctor
+  npx.cmd --yes codex-q@0.3.0 install
+  npx.cmd --yes codex-q@0.3.0 doctor
   ```
 
-- [ ] Fully exit the Store app, launch **QuotaPeek for Codex**, and confirm English and
+- [ ] Fully exit the Store app, launch **Codex + Quota**, and confirm English and
       Chinese renderer locales, quota refresh, account-menu clearance, and
       conversation scrolling.
 - [ ] Run `doctor --live`, inspect its output for accidental identifiers, and

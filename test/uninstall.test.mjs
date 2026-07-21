@@ -59,7 +59,7 @@ test("uninstall rejects an install record outside the direct managed engines dir
   const { env, paths } = await fixture(t);
   await writeJsonAtomic(paths.config, {
     schemaVersion: 1,
-    version: "0.2.1",
+    version: "0.3.0",
     engineRoot: join(paths.root, "nested", "runtime"),
     nodePath: "C:\\Program Files\\nodejs\\node.exe",
   });

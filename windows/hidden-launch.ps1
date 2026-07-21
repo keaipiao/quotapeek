@@ -51,7 +51,7 @@ try {
     & $resolvedNode $entryPoint start --installed
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
-        Write-LauncherError ("start exited with code " + $exitCode + "; run quotapeek doctor --live for details")
+        Write-LauncherError ("start exited with code " + $exitCode + "; run codex-q doctor --live for details")
     } elseif (Test-Path -LiteralPath $launcherLog -PathType Leaf) {
         Remove-Item -LiteralPath $launcherLog -Force -ErrorAction SilentlyContinue
     }
