@@ -171,7 +171,6 @@ export class AppServerClient extends EventEmitter {
         this.#pending.delete(id);
         reject(appServerError("Codex app-server request timed out", { method, timeoutMs }));
       }, timeoutMs);
-      timer.unref?.();
       this.#pending.set(id, { method, resolve, reject, timer });
       try {
         this.#write(message, (error) => {
