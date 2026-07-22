@@ -16,7 +16,8 @@ const SECRET_PATTERNS = [
 ];
 
 const SAFE_DETAIL_KEYS = new Set([
-  "bucketCount", "code", "failureCount", "message", "pid", "port", "reason", "source"
+  "attempt", "bucketCount", "code", "failureCount", "message", "pid", "port",
+  "reason", "retryDelayMs", "source"
 ]);
 const SAFE_LOG_CODES = new Set([
   "E_ANCHOR_AMBIGUOUS", "E_APP_SERVER_CLOSED", "E_APP_SERVER_UNSUPPORTED",

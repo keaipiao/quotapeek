@@ -108,8 +108,8 @@ test("the conventional global --version form returns the package version", async
   const { capture, io } = captureIo();
   const result = await main(["--version"], io);
   assert.equal(result.ok, true);
-  assert.equal(result.version, "0.4.0");
-  assert.equal(capture.stdout, "0.4.0\n");
+  assert.equal(result.version, "0.4.1");
+  assert.equal(capture.stdout, "0.4.1\n");
 });
 
 test("--json produces one structured error result and marks failure", async () => {

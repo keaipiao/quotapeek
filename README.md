@@ -47,6 +47,18 @@ Simplified Chinese, and Traditional Chinese are built in; other languages fall
 back to English. When usable data is available, Codex Quota hides the equivalent
 native footer quota.
 
+### Data freshness
+
+**May be outdated** does not mean the allowance itself has expired. It means
+the latest successful quota read is more than three minutes old. Codex Quota
+normally refreshes every 60–120 seconds. After a failed read, it retries after
+5, 15, and then 30 seconds, continuing at 30-second intervals while the local
+app-server is unavailable. The badge returns to **Live** after the next
+successful read. During ordinary read failures, only a continuous failure
+beyond three minutes produces this warning, and values older than 15 minutes
+are no longer shown. A closed provider or Codex session can become unavailable
+immediately instead.
+
 ## Update
 
 Routine Codex desktop updates require no Codex Quota reinstall. To update
@@ -100,7 +112,9 @@ npx.cmd --yes @elonmark/codex-quota@latest uninstall
 
 Codex Quota does not modify the Store package, `app.asar`, Codex configuration,
 or account credentials. It uses a random loopback CDP port and the official
-local app-server. See [SECURITY.md](SECURITY.md) for the security boundary.
+local app-server. See [SECURITY.md](SECURITY.md) for the security boundary and
+the [security architecture diagram (Simplified Chinese)](https://github.com/keaipiao/codex-quota/blob/main/docs/assets/codex-quota-security-architecture-zh.png)
+for a visual overview.
 
 ```powershell
 npm.cmd run check
@@ -110,3 +124,8 @@ npm.cmd pack --dry-run
 
 See [CONTRIBUTING.md](CONTRIBUTING.md),
 [docs/RELEASING.md](docs/RELEASING.md), and the [MIT license](LICENSE).
+
+## Community
+
+Codex Quota recognizes and thanks the open-source community
+[LINUX DO](https://linux.do/).

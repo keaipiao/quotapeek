@@ -56,12 +56,16 @@ test("file logger allow-lists detail keys and stops at its size cap", async (t) 
   await logger("warn", "provider.failed", {
     code: "E_RATE_LIMIT_READ",
     message: "Authorization: Bearer top-secret",
+    attempt: 2,
+    retryDelayMs: 15_000,
     email: "private@example.test",
     unexpected: "must-not-be-written",
   });
   await logger("warn", "provider.failed", { message: "x".repeat(500) });
   const contents = await readFile(path, "utf8");
   assert.match(contents, /"code":"E_RATE_LIMIT_READ"/);
+  assert.match(contents, /"attempt":"2"/);
+  assert.match(contents, /"retryDelayMs":"15000"/);
   assert.match(contents, /\[REDACTED\]/);
   assert.doesNotMatch(contents, /top-secret|private@example\.test|must-not-be-written/);
   assert.ok((await stat(path)).size <= 220);

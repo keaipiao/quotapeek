@@ -370,6 +370,58 @@ test("daemon rebuilds the provider after an unexpected app-server close", async 
   assert.ok(unavailable.some((value) => value.reasonCode === "E_APP_SERVER_CLOSED"));
 });
 
+test("daemon retries provider startup after 5, 15, and capped 30 second backoff steps", async (t) => {
+  const { root, paths, state } = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let runtimeAttempts = 0;
+  let resolveStop;
+  const stop = new Promise((resolve) => { resolveStop = resolve; });
+  const retryDelays = [];
+
+  const result = await daemonCommand({ session: paths.session, nonce: state.nonce, "engine-root": root }, {
+    paths,
+    watcher: new EventEmitter(),
+    bridge: {
+      async start() {},
+      async publish() {},
+      async unavailable() {},
+      async heartbeat() {},
+      async cleanup() {}
+    },
+    log() {},
+    resolveRuntime: async () => {
+      runtimeAttempts += 1;
+      if (runtimeAttempts <= 4) {
+        throw Object.assign(new Error("runtime temporarily unavailable"), { code: "E_CODEX_RUNTIME_UNAVAILABLE" });
+      }
+      return { source: "fake" };
+    },
+    createProvider: async () => new EventEmitter(),
+    createCoordinator: async () => ({
+      async start() { resolveStop({ reason: "test-stop" }); },
+      async stop() {}
+    }),
+    setProviderRetryTimeout: (callback, waitMs) => {
+      const handle = { active: true, unref() {} };
+      retryDelays.push(waitMs);
+      queueMicrotask(() => {
+        if (!handle.active) return;
+        handle.active = false;
+        callback();
+      });
+      return handle;
+    },
+    clearProviderRetryTimeout: (handle) => { handle.active = false; },
+    waitForStop: () => stop,
+    heartbeatMs: 60_000,
+    sessionHeartbeatMs: 60_000
+  });
+
+  assert.deepEqual(result, { ok: true, reason: "test-stop" });
+  assert.equal(runtimeAttempts, 5);
+  assert.deepEqual(retryDelays, [5_000, 15_000, 30_000, 30_000]);
+});
+
 test("stop monitor ignores a foreign nonce and accepts the matching request", async (t) => {
   const { root, paths, state } = await fixture();
   t.after(() => rm(root, { recursive: true, force: true }));

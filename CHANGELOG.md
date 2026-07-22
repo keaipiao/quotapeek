@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-07-22
+
+### Fixed
+
+- Transient quota-read failures now retry after 5, 15, and 30 seconds, then
+  every 30 seconds until recovery, instead of waiting for the next 60–120
+  second normal poll. A successful read cancels the retry and resets backoff.
+- Initial app-server provider failures use the same bounded fast recovery
+  schedule, so temporary runtime or connection races recover sooner.
+- Retry callbacks are invalidated on recovery and shutdown, and a read
+  interrupted by shutdown can no longer publish an unavailable state or
+  schedule more work.
+
+### Changed
+
+- During recoverable read failures, a live snapshot remains available for up
+  to 15 minutes; after three minutes without a successful update it is marked
+  as potentially outdated. A closed provider or Codex session can still move
+  directly to unavailable.
+- The READMEs now document freshness behavior, link the security architecture
+  diagram, and recognize the LINUX DO open-source community.
+
 ## [0.4.0] - 2026-07-21
 
 ### Changed

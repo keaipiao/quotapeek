@@ -58,7 +58,7 @@ export class AppServerClient extends EventEmitter {
       clientInfo: {
         name: "codex-quota",
         title: "Codex Quota",
-        version: "0.4.0"
+        version: "0.4.1"
       },
       ...options
     };

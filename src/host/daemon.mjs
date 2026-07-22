@@ -21,7 +21,7 @@ import {
 import { RendererBridge } from "./renderer-bridge.mjs";
 
 const HEARTBEAT_MS = 15_000;
-const PROVIDER_RETRY_MS = 30_000;
+const PROVIDER_RETRY_DELAYS_MS = Object.freeze([5_000, 15_000, 30_000]);
 const PARENT_GATE_TIMEOUT_MS = 15_000;
 
 /**
@@ -62,6 +62,8 @@ export async function daemonCommand(flags = {}, injected = {}) {
   let bridge = null;
   let coordinator = null;
   let providerRetryTimer = null;
+  let providerRetryAttempt = 0;
+  let providerRetryGeneration = 0;
   let providerStartPromise = null;
   let heartbeatTimer = null;
   let sessionHeartbeatTimer = null;
@@ -90,6 +92,13 @@ export async function daemonCommand(flags = {}, injected = {}) {
   const sameReadContext = (left, right) => (
     (left === null && right === null) || sameQuotaAccountContext(left, right)
   );
+  const providerRetryDelaysMs = normalizeRetryDelays(
+    injected.providerRetryDelaysMs
+      ?? (injected.providerRetryMs === undefined ? PROVIDER_RETRY_DELAYS_MS : [injected.providerRetryMs]),
+    "providerRetryDelaysMs"
+  );
+  const setProviderRetryTimeout = injected.setProviderRetryTimeout ?? setTimeout;
+  const clearProviderRetryTimeout = injected.clearProviderRetryTimeout ?? clearTimeout;
 
   const safeUpdate = (patch) => {
     if (!ownsSession) return Promise.resolve(null);
@@ -114,13 +123,25 @@ export async function daemonCommand(flags = {}, injected = {}) {
     await safeUpdate({ quotaStatus: "unavailable", quotaErrorCode: code });
   };
 
+  const cancelProviderRetry = () => {
+    providerRetryGeneration += 1;
+    if (providerRetryTimer) clearProviderRetryTimeout(providerRetryTimer);
+    providerRetryTimer = null;
+  };
+
   const scheduleProviderRetry = () => {
     if (stopping || coordinator || providerStartPromise || providerRetryTimer) return;
-    providerRetryTimer = setTimeout(() => {
+    const retryIndex = Math.min(providerRetryAttempt, providerRetryDelaysMs.length - 1);
+    const waitMs = providerRetryDelaysMs[retryIndex];
+    providerRetryAttempt += 1;
+    const generation = ++providerRetryGeneration;
+    providerRetryTimer = setProviderRetryTimeout(() => {
+      if (stopping || generation !== providerRetryGeneration) return;
       providerRetryTimer = null;
       void ensureProvider();
-    }, injected.providerRetryMs ?? PROVIDER_RETRY_MS);
+    }, waitMs);
     providerRetryTimer.unref?.();
+    log("info", "provider.retry.scheduled", { attempt: providerRetryAttempt, retryDelayMs: waitMs });
   };
 
   const recoverProvider = async (candidate, error) => {
@@ -152,7 +173,7 @@ export async function daemonCommand(flags = {}, injected = {}) {
               if (contextWasChecked && !contextIsStable) {
                 if (cacheEnabled) await deleteQuotaCache(quotaCachePath).catch(() => false);
                 log("warn", "quota.snapshot.context.changed");
-                return;
+                return false;
               }
               liveSnapshotPublished = true;
               quotaStatus = "available";
@@ -174,6 +195,7 @@ export async function daemonCommand(flags = {}, injected = {}) {
                 }
               }
               await safeUpdate({ quotaStatus: "available", quotaErrorCode: null, quotaUpdatedAtMs: now() });
+              return true;
             },
             publishUnavailable,
             log,
@@ -188,11 +210,14 @@ export async function daemonCommand(flags = {}, injected = {}) {
         await candidate.stop().catch(() => {});
         return false;
       }
+      providerRetryAttempt = 0;
+      cancelProviderRetry();
       log("info", "provider.started", { source: runtime.source ?? "resolved" });
       return true;
     } catch (error) {
       if (coordinator === candidate) coordinator = null;
       await candidate?.stop?.().catch(() => {});
+      if (stopping) return false;
       log("warn", "provider.start.failed", {
         code: safeErrorCode(error),
         message: safeErrorMessage(error)
@@ -345,7 +370,7 @@ export async function daemonCommand(flags = {}, injected = {}) {
     stopController.abort();
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     if (sessionHeartbeatTimer) clearInterval(sessionHeartbeatTimer);
-    if (providerRetryTimer) clearTimeout(providerRetryTimer);
+    cancelProviderRetry();
     await cacheReplayPromise.catch(() => {});
     await providerStartPromise?.catch(() => {});
     await coordinator?.stop?.().catch(() => {});
@@ -448,6 +473,14 @@ function resolveRequiredPath(value, name) {
 function requireText(value, name) {
   if (typeof value !== "string" || !value.trim()) throw new TypeError(`${name} is required`);
   return value;
+}
+
+function normalizeRetryDelays(value, name) {
+  if (!Array.isArray(value) || value.length === 0 ||
+      value.some((delayMs) => !Number.isFinite(delayMs) || delayMs < 0)) {
+    throw new TypeError(`${name} must contain at least one non-negative finite number`);
+  }
+  return Object.freeze([...value]);
 }
 
 function samePath(left, right) {
