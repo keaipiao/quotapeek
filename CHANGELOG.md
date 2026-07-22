@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2026-07-22
+
+### Fixed
+
+- Codex's native low-usage sidebar card is now hidden alongside the existing
+  footer quota whenever the injected general quota is available.
+
 ## [0.4.2] - 2026-07-22
 
 ### Fixed

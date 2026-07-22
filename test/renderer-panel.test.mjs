@@ -170,6 +170,9 @@ function matchesSelector(element, selector) {
   const tag = element.tagName.toLowerCase();
   if (selector === "footer") return tag === "footer";
   if (selector === "[role=\"contentinfo\"]") return element.getAttribute("role") === "contentinfo";
+  if (selector === "[role=\"status\"][aria-live=\"polite\"]") {
+    return element.getAttribute("role") === "status" && element.getAttribute("aria-live") === "polite";
+  }
   if (selector === "[data-sidebar-footer]") return element.hasAttribute("data-sidebar-footer");
   if (selector === "[data-slot]") return element.hasAttribute("data-slot");
   if (selector === "[data-testid]") return element.hasAttribute("data-testid");
@@ -203,6 +206,25 @@ function findAllTree(element, predicate, matches = []) {
 
 function rect(top, bottom, width = 260, left = 0) {
   return { top, bottom, left, right: left + width, width, height: bottom - top };
+}
+
+function createNativeLowUsageAlert({ remainingPercent = 10, top = 540, bottom = 650 } = {}) {
+  const wrapper = new FakeElement("div", rect(top, bottom));
+  wrapper.className = "w-full mb-2";
+  const status = new FakeElement("div", rect(top, bottom));
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
+  status.textContent = `${remainingPercent}% usage remaining`;
+  const dismiss = new FakeElement("button", rect(top + 8, top + 28, 20, 228));
+  dismiss.setAttribute("aria-label", "Dismiss usage alert");
+  const progress = new FakeElement("progress", rect(bottom - 20, bottom - 14, 236, 12));
+  progress.setAttribute("aria-label", "Usage consumed");
+  progress.setAttribute("max", "100");
+  progress.setAttribute("value", String(100 - remainingPercent));
+  status.appendChild(dismiss);
+  status.appendChild(progress);
+  wrapper.appendChild(status);
+  return { wrapper, status, dismiss, progress };
 }
 
 function createEnvironment(options = {}) {
@@ -766,7 +788,7 @@ test("a unique native footer quota is hidden only while the injected general quo
   assert.equal(fresh.nativeQuotaHiddenCount, 1);
   assert.equal(nativeQuota.style.display, "none");
   assert.equal(nativeQuota.style.getPropertyPriority("display"), "important");
-  assert.equal(nativeQuota.getAttribute("data-codex-quota-native-hidden"), "0.4.2");
+  assert.equal(nativeQuota.getAttribute("data-codex-quota-native-hidden"), "0.4.3");
   assert.notEqual(unrelated.style.display, "none");
   assert.notEqual(environment.accountButton.style.display, "none");
 
@@ -776,7 +798,7 @@ test("a unique native footer quota is hidden only while the injected general quo
   assert.equal(repaired.nativeQuotaHiddenCount, 1);
   assert.equal(nativeQuota.style.display, "none");
   assert.equal(nativeQuota.style.getPropertyPriority("display"), "important");
-  assert.equal(nativeQuota.getAttribute("data-codex-quota-native-hidden"), "0.4.2");
+  assert.equal(nativeQuota.getAttribute("data-codex-quota-native-hidden"), "0.4.3");
 
   const unavailable = api.unavailable({ reason: "temporarily unavailable" });
   assert.equal(unavailable.nativeQuotaHiddenCount, 0);
@@ -791,6 +813,95 @@ test("a unique native footer quota is hidden only while the injected general quo
   assert.equal(environment.scroller.style.marginBottom || "", "");
   assert.equal(environment.scroller.style.paddingBottom || "", "");
   assert.equal(environment.scroller.style.getPropertyValue("--sidebar-scroll-footer-edge"), "");
+});
+
+test("a late low-usage sidebar card outside the account footer is hidden without leaving its wrapper", () => {
+  const environment = createEnvironment();
+  environment.evaluate();
+  const api = environment.window.__CODEX_QUOTA_PANEL__;
+  api.update(snapshot(1_800_000_000_000));
+  const { wrapper } = createNativeLowUsageAlert({ remainingPercent: 10 });
+  wrapper.style.display = "flex";
+  environment.sidebar.appendChild(wrapper);
+
+  const observer = environment.observers.find((entry) => !entry.disconnected);
+  observer.callback([{ type: "childList", addedNodes: [wrapper] }]);
+  const reconcile = environment.timeouts.find((entry) => entry.active && entry.milliseconds === 80);
+  assert.ok(reconcile);
+  reconcile.callback();
+  const hidden = api.status();
+  assert.equal(hidden.nativeQuotaHiddenCount, 1);
+  assert.equal(wrapper.style.display, "none");
+  assert.equal(wrapper.style.getPropertyPriority("display"), "important");
+  assert.equal(wrapper.getAttribute("data-codex-quota-native-hidden"), "0.4.3");
+
+  // Browsers collapse a display:none element's geometry. A later reconcile
+  // must keep ownership instead of restoring and hiding it in a loop.
+  wrapper._rect = rect(0, 0);
+  const stable = api.heartbeat();
+  assert.equal(stable.nativeQuotaHiddenCount, 1);
+  assert.equal(wrapper.style.display, "none");
+
+  const unavailable = api.unavailable({ reason: "temporarily unavailable" });
+  assert.equal(unavailable.nativeQuotaHiddenCount, 0);
+  assert.equal(wrapper.style.display, "flex");
+  assert.equal(wrapper.hasAttribute("data-codex-quota-native-hidden"), false);
+});
+
+test("a low-usage-looking card inside conversation navigation is never hidden", () => {
+  const environment = createEnvironment();
+  const { wrapper } = createNativeLowUsageAlert({ remainingPercent: 10, top: 560, bottom: 650 });
+  environment.scroller.appendChild(wrapper);
+
+  environment.evaluate();
+  const status = environment.window.__CODEX_QUOTA_PANEL__.update(snapshot(1_800_000_000_000));
+
+  assert.equal(status.nativeQuotaHiddenCount, 0);
+  assert.notEqual(wrapper.style.display, "none");
+});
+
+test("an unrelated polite progress status outside navigation is never hidden", () => {
+  const environment = createEnvironment();
+  const wrapper = new FakeElement("div", rect(540, 650));
+  const statusCard = new FakeElement("div", rect(540, 650));
+  statusCard.setAttribute("role", "status");
+  statusCard.setAttribute("aria-live", "polite");
+  statusCard.textContent = "Backup 50% complete";
+  const dismiss = new FakeElement("button", rect(548, 568, 20, 228));
+  dismiss.setAttribute("aria-label", "Dismiss backup status");
+  const progress = new FakeElement("progress", rect(630, 636, 236, 12));
+  progress.setAttribute("aria-label", "Backup progress");
+  progress.setAttribute("max", "100");
+  progress.setAttribute("value", "50");
+  statusCard.appendChild(dismiss);
+  statusCard.appendChild(progress);
+  wrapper.appendChild(statusCard);
+  environment.sidebar.appendChild(wrapper);
+
+  environment.evaluate();
+  const result = environment.window.__CODEX_QUOTA_PANEL__.update(snapshot(1_800_000_000_000));
+
+  assert.equal(result.nativeQuotaHiddenCount, 0);
+  assert.notEqual(wrapper.style.display, "none");
+});
+
+test("the footer quota and the distinct low-usage sidebar card can both be hidden", () => {
+  const environment = createEnvironment();
+  const nativeFooterQuota = new FakeElement("div", rect(675, 700));
+  nativeFooterQuota.textContent = "Usage remaining 10%";
+  environment.layout.insertBefore(nativeFooterQuota, environment.footer);
+  const { wrapper: lowUsageAlert } = createNativeLowUsageAlert({ remainingPercent: 10 });
+  environment.sidebar.appendChild(lowUsageAlert);
+
+  environment.evaluate();
+  const status = environment.window.__CODEX_QUOTA_PANEL__.update(snapshot(1_800_000_000_000));
+
+  assert.equal(status.nativeQuotaHiddenCount, 2);
+  assert.equal(nativeFooterQuota.style.display, "none");
+  assert.equal(lowUsageAlert.style.display, "none");
+  environment.window.__CODEX_QUOTA_PANEL__.cleanup();
+  assert.notEqual(nativeFooterQuota.style.display, "none");
+  assert.notEqual(lowUsageAlert.style.display, "none");
 });
 
 test("cleanup does not overwrite an externally replaced scroll fade edge", () => {

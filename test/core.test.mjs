@@ -51,7 +51,7 @@ test("installer stages a source-independent runtime without shortcuts", async ()
     });
     assert.equal(result.ok, true);
     const installed = await getInstalledRuntime({ env });
-    assert.equal(installed.version, "0.4.2");
+    assert.equal(installed.version, "0.4.3");
     const bin = await readFile(join(installed.engineRoot, "bin", "codex-quota.mjs"), "utf8");
     assert.match(bin, /src\/cli\.mjs/);
     const icon = await readFile(join(installed.engineRoot, "windows", "assets", "codex-quota.ico"));

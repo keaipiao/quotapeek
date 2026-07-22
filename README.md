@@ -44,8 +44,8 @@ running, its official icon can still bring the same process to the foreground.
 
 The panel follows the Codex interface language automatically. English,
 Simplified Chinese, and Traditional Chinese are built in; other languages fall
-back to English. When usable data is available, Codex Quota hides the equivalent
-native footer quota.
+back to English. When usable data is available, Codex Quota hides equivalent
+native sidebar quota surfaces, including the low-usage alert card.
 
 ### Data freshness
 

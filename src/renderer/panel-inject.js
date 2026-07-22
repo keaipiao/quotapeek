@@ -2,7 +2,7 @@
   "use strict";
 
   const GLOBAL_KEY = "__CODEX_QUOTA_PANEL__";
-  const VERSION = "0.4.2";
+  const VERSION = "0.4.3";
   const HOST_ID = "codex-quota-panel";
   const SIDEBAR_SELECTOR = "aside.app-shell-left-panel";
   const NATIVE_HIDDEN_ATTR = "data-codex-quota-native-hidden";
@@ -1179,7 +1179,7 @@
     return score >= 55 ? score : null;
   }
 
-  function findNativeQuotaCandidate(sidebar, anchor) {
+  function findNativeFooterQuotaCandidate(sidebar, anchor) {
     if (!sidebar || !anchor) return null;
     const scored = [];
     const parent = anchor.parentElement;
@@ -1190,10 +1190,14 @@
       if (sibling === anchor) break;
       if (sibling === state.host) continue;
       const siblingRect = rectFrom(sibling);
-      if (!sidebarRect || !anchorRect || !siblingRect || siblingRect.height <= 0) continue;
-      if (siblingRect.height > Math.max(180, sidebarRect.height * 0.28)) continue;
-      if (siblingRect.left < sidebarRect.left - 2 || siblingRect.right > sidebarRect.right + 2) continue;
-      if (siblingRect.bottom > anchorRect.top + 2) continue;
+      const alreadyHidden = state.nativeQuotaHidden.has(sibling);
+      if (!sidebarRect || !anchorRect || !siblingRect) continue;
+      if (!alreadyHidden) {
+        if (siblingRect.height <= 0) continue;
+        if (siblingRect.height > Math.max(180, sidebarRect.height * 0.28)) continue;
+        if (siblingRect.left < sidebarRect.left - 2 || siblingRect.right > sidebarRect.right + 2) continue;
+        if (siblingRect.bottom > anchorRect.top + 2) continue;
+      }
       const score = nativeQuotaScore(sibling);
       if (score !== null) scored.push({ element: sibling, score });
     }
@@ -1202,10 +1206,107 @@
     return scored[0].element;
   }
 
+  function isInsideSidebarNavigation(element, sidebar) {
+    for (let current = element; current && current !== sidebar; current = current.parentElement) {
+      const tag = String(current.tagName || "").toLowerCase();
+      const role = String(current.getAttribute && current.getAttribute("role") || "").toLowerCase();
+      if (tag === "nav" || role === "list" || role === "listitem" || role === "navigation"
+        || (current.hasAttribute && current.hasAttribute("data-app-action-sidebar-scroll"))) return true;
+    }
+    return false;
+  }
+
+  function nativeLowUsageAlertScore(element) {
+    // Codex renders its low core-usage card as a polite status outside the
+    // account footer. Its title reports remaining usage while the native
+    // progress element reports consumed usage; the complementary values keep
+    // this match distinct from generic sidebar status and onboarding cards.
+    if (!element || String(element.getAttribute && element.getAttribute("role") || "").toLowerCase() !== "status"
+      || String(element.getAttribute && element.getAttribute("aria-live") || "").toLowerCase() !== "polite") {
+      return null;
+    }
+    let descendants = [];
+    try { descendants = Array.from(element.querySelectorAll("*")).slice(0, 80); } catch { descendants = []; }
+    if (!descendants.some((node) => String(node.tagName || "").toLowerCase() === "button")) return null;
+
+    const progressNodes = descendants.filter((node) => {
+      const tag = String(node.tagName || "").toLowerCase();
+      const role = String(node.getAttribute && node.getAttribute("role") || "").toLowerCase();
+      return tag === "progress" || role === "progressbar" || role === "meter";
+    });
+    const text = subtreeText(element);
+    const percentages = [];
+    const percentPattern = /(?:([0-9]{1,3}(?:[.,][0-9]+)?)\s*%|%\s*([0-9]{1,3}(?:[.,][0-9]+)?))/g;
+    for (const match of text.matchAll(percentPattern)) {
+      const value = Number(String(match[1] || match[2]).replace(",", "."));
+      if (Number.isFinite(value) && value >= 0 && value <= 100) percentages.push(value);
+    }
+    if (!percentages.length) return null;
+
+    const complementaryProgress = progressNodes.some((node) => {
+      const maximum = Number(node.getAttribute && node.getAttribute("max") || node.max);
+      const value = Number(node.getAttribute && node.getAttribute("value") || node.value);
+      return Number.isFinite(maximum) && Math.abs(maximum - 100) <= 0.01
+        && Number.isFinite(value) && value >= 0 && value <= 100
+        && percentages.some((remaining) => Math.abs((100 - remaining) - value) <= 1.5);
+    });
+    if (!complementaryProgress) return null;
+    const semanticScore = nativeQuotaScore(element);
+    return semanticScore === null ? null : 200 + semanticScore;
+  }
+
+  function findNativeLowUsageAlertCandidate(sidebar, anchor) {
+    if (!sidebar || !anchor || typeof sidebar.querySelectorAll !== "function") return null;
+    const sidebarRect = rectFrom(sidebar);
+    const anchorRect = rectFrom(anchor);
+    if (!sidebarRect || !anchorRect) return null;
+    let elements = [];
+    try {
+      elements = Array.from(sidebar.querySelectorAll('[role="status"][aria-live="polite"]')).slice(0, 20);
+    } catch {
+      elements = [];
+    }
+    const scored = [];
+    for (const element of elements) {
+      const score = nativeLowUsageAlertScore(element);
+      if (score === null || isInsideSidebarNavigation(element, sidebar)) continue;
+      const parent = element.parentElement;
+      // The native component adds its bottom spacing to a single-child wrapper.
+      // Hide that wrapper as well so no empty gap remains above our panel.
+      const candidate = parent && parent !== sidebar && Array.from(parent.children || []).length === 1
+        ? parent
+        : element;
+      if (candidate === state.host || (state.host && candidate.contains(state.host))
+        || candidate.contains(anchor) || isInsideSidebarNavigation(candidate, sidebar)) continue;
+      const candidateRect = rectFrom(candidate);
+      const alreadyHidden = state.nativeQuotaHidden.has(candidate);
+      if (!candidateRect) continue;
+      if (!alreadyHidden) {
+        if (candidateRect.height <= 0 || candidateRect.height > Math.max(220, sidebarRect.height * 0.32)) continue;
+        if (candidateRect.width < sidebarRect.width * 0.55) continue;
+        if (candidateRect.left < sidebarRect.left - 2 || candidateRect.right > sidebarRect.right + 2) continue;
+        if (candidateRect.top < sidebarRect.top - 2 || candidateRect.bottom > anchorRect.top + 2) continue;
+      }
+      scored.push({ element: candidate, score });
+    }
+    scored.sort((left, right) => right.score - left.score);
+    if (scored.length !== 1) return null;
+    return scored[0].element;
+  }
+
+  function findNativeQuotaCandidates(sidebar, anchor) {
+    const candidates = [
+      findNativeFooterQuotaCandidate(sidebar, anchor),
+      findNativeLowUsageAlertCandidate(sidebar, anchor),
+    ].filter(Boolean);
+    return Array.from(new Set(candidates));
+  }
+
   function restoreNativeQuota(except = null) {
+    const preserved = except instanceof Set ? except : except ? new Set([except]) : null;
     let changed = false;
     for (const [element, snapshot] of state.nativeQuotaHidden) {
-      if (element === except) continue;
+      if (preserved && preserved.has(element)) continue;
       const markerOwned = element && element.getAttribute
         && element.getAttribute(NATIVE_HIDDEN_ATTR) === VERSION;
       const display = readInlineStyle(element, "display");
@@ -1229,27 +1330,29 @@
       && generalBucket && currentFreshness !== "unavailable");
     if (!shouldHide) return restoreNativeQuota();
 
-    const candidate = findNativeQuotaCandidate(state.sidebar, state.anchor);
-    if (!candidate) return restoreNativeQuota();
-    let changed = restoreNativeQuota(candidate);
-    if (!state.nativeQuotaHidden.has(candidate)) {
-      state.nativeQuotaHidden.set(candidate, {
-        display: readInlineStyle(candidate, "display"),
-        markerPresent: candidate.hasAttribute && candidate.hasAttribute(NATIVE_HIDDEN_ATTR),
-        markerValue: candidate.getAttribute && candidate.getAttribute(NATIVE_HIDDEN_ATTR),
-      });
-      candidate.setAttribute(NATIVE_HIDDEN_ATTR, VERSION);
-      writeInlineStyle(candidate, "display", "none", "important");
-      changed = true;
-    } else {
-      const display = readInlineStyle(candidate, "display");
-      if (candidate.getAttribute(NATIVE_HIDDEN_ATTR) !== VERSION) {
+    const candidates = findNativeQuotaCandidates(state.sidebar, state.anchor);
+    const preserved = new Set(candidates);
+    let changed = restoreNativeQuota(preserved);
+    for (const candidate of candidates) {
+      if (!state.nativeQuotaHidden.has(candidate)) {
+        state.nativeQuotaHidden.set(candidate, {
+          display: readInlineStyle(candidate, "display"),
+          markerPresent: candidate.hasAttribute && candidate.hasAttribute(NATIVE_HIDDEN_ATTR),
+          markerValue: candidate.getAttribute && candidate.getAttribute(NATIVE_HIDDEN_ATTR),
+        });
         candidate.setAttribute(NATIVE_HIDDEN_ATTR, VERSION);
-        changed = true;
-      }
-      if (display.value !== "none" || display.priority !== "important") {
         writeInlineStyle(candidate, "display", "none", "important");
         changed = true;
+      } else {
+        const display = readInlineStyle(candidate, "display");
+        if (candidate.getAttribute(NATIVE_HIDDEN_ATTR) !== VERSION) {
+          candidate.setAttribute(NATIVE_HIDDEN_ATTR, VERSION);
+          changed = true;
+        }
+        if (display.value !== "none" || display.priority !== "important") {
+          writeInlineStyle(candidate, "display", "none", "important");
+          changed = true;
+        }
       }
     }
     return changed;
