@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-07-22
+
+### Fixed
+
+- Warning quota values now use a project-controlled amber color instead of a
+  host theme token that some Codex themes render as red.
+- Remaining quota is green above 50%, amber from 20% through 50%, and red only
+  below 20%, including explicit tests for both boundary values.
+
 ## [0.4.1] - 2026-07-22
 
 ### Fixed

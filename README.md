@@ -39,7 +39,7 @@ running, its official icon can still bring the same process to the foreground.
 - The general Codex allowance only, without model-specific duplicates.
 - A recognized plan such as Free, Plus, Pro 5×, or Pro 20×.
 - Remaining percentage, limit period, reset time, and countdown.
-- Green, amber, and red progress states as allowance decreases.
+- Green above 50%, amber from 20% through 50%, and red below 20%.
 - The most recent cached value marked **Refreshing** until live data arrives.
 
 The panel follows the Codex interface language automatically. English,

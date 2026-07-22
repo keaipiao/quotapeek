@@ -12,7 +12,7 @@ body:
     attributes:
       label: Codex Quota version
       description: Run `npx.cmd --yes @elonmark/codex-quota@latest version`, or give the exact archive version.
-      placeholder: 0.4.1
+      placeholder: 0.4.2
     validations:
       required: true
 

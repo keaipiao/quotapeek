@@ -720,7 +720,8 @@ test("remaining quota uses explicit healthy, warning, and critical thresholds", 
   assert.equal(hooks.remainingTone(51), "healthy");
   assert.equal(hooks.remainingTone(50), "warning");
   assert.equal(hooks.remainingTone(21), "warning");
-  assert.equal(hooks.remainingTone(20), "critical");
+  assert.equal(hooks.remainingTone(20), "warning");
+  assert.equal(hooks.remainingTone(19.9), "critical");
   assert.equal(hooks.remainingTone(0), "critical");
 
   api.update(snapshot(1_800_000_000_000));
@@ -728,7 +729,8 @@ test("remaining quota uses explicit healthy, warning, and critical thresholds", 
   const windows = findAllTree(host._shadow, (element) => element.className === "quota-window");
   assert.deepEqual(windows.map((element) => element.getAttribute("data-level")), ["healthy", "warning"]);
   const styleText = host._shadow.children[0].textContent;
-  assert.match(styleText, /--quota-warning:[^;]*#a26300/);
+  assert.match(styleText, /--quota-warning:[^;]*#e0a100/);
+  assert.doesNotMatch(styleText, /--quota-warning:[^;]*editor-warning-foreground/);
   assert.match(styleText, /--quota-critical:[^;]*#c2413b/);
   assert.match(styleText, /data-level="warning"[^}]*var\(--quota-warning\)/s);
   assert.match(styleText, /data-level="critical"[^}]*var\(--quota-critical\)/s);
@@ -764,7 +766,7 @@ test("a unique native footer quota is hidden only while the injected general quo
   assert.equal(fresh.nativeQuotaHiddenCount, 1);
   assert.equal(nativeQuota.style.display, "none");
   assert.equal(nativeQuota.style.getPropertyPriority("display"), "important");
-  assert.equal(nativeQuota.getAttribute("data-codex-quota-native-hidden"), "0.4.1");
+  assert.equal(nativeQuota.getAttribute("data-codex-quota-native-hidden"), "0.4.2");
   assert.notEqual(unrelated.style.display, "none");
   assert.notEqual(environment.accountButton.style.display, "none");
 
@@ -774,7 +776,7 @@ test("a unique native footer quota is hidden only while the injected general quo
   assert.equal(repaired.nativeQuotaHiddenCount, 1);
   assert.equal(nativeQuota.style.display, "none");
   assert.equal(nativeQuota.style.getPropertyPriority("display"), "important");
-  assert.equal(nativeQuota.getAttribute("data-codex-quota-native-hidden"), "0.4.1");
+  assert.equal(nativeQuota.getAttribute("data-codex-quota-native-hidden"), "0.4.2");
 
   const unavailable = api.unavailable({ reason: "temporarily unavailable" });
   assert.equal(unavailable.nativeQuotaHiddenCount, 0);

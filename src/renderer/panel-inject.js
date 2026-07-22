@@ -2,7 +2,7 @@
   "use strict";
 
   const GLOBAL_KEY = "__CODEX_QUOTA_PANEL__";
-  const VERSION = "0.4.1";
+  const VERSION = "0.4.2";
   const HOST_ID = "codex-quota-panel";
   const SIDEBAR_SELECTOR = "aside.app-shell-left-panel";
   const NATIVE_HIDDEN_ATTR = "data-codex-quota-native-hidden";
@@ -352,7 +352,7 @@
 
   function remainingTone(value) {
     const remaining = clampPercent(value);
-    if (remaining === null || remaining <= 20) return "critical";
+    if (remaining === null || remaining < 20) return "critical";
     if (remaining <= 50) return "warning";
     return "healthy";
   }
@@ -963,7 +963,7 @@
       .quota-panel {
         --quota-panel-foreground: var(--color-token-foreground, var(--vscode-sideBar-foreground, CanvasText));
         --quota-healthy: color-mix(in oklab, var(--color-token-git-decoration-added-resource-foreground, #16855b) 78%, var(--quota-panel-foreground));
-        --quota-warning: color-mix(in oklab, var(--color-token-editor-warning-foreground, #a26300) 82%, var(--quota-panel-foreground));
+        --quota-warning: color-mix(in oklab, #e0a100 82%, var(--quota-panel-foreground));
         --quota-critical: color-mix(in oklab, var(--color-token-error-foreground, #c2413b) 82%, var(--quota-panel-foreground));
         color: var(--quota-panel-foreground);
         background: color-mix(in srgb, var(--vscode-sideBar-background, Canvas) 96%, currentColor 4%);
