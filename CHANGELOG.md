@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.5] - 2026-07-22
+
+### Fixed
+
+- Native low-usage cards are now suppressed by an independent,
+  document-lifetime structural policy from the earliest verified startup
+  point. It covers the docked sidebar, responsive floating sidebar, and the
+  compact-window fixed copy without matching translated text or waiting for
+  quota data.
+- Quota data now remains cached while no sidebar exists. The panel observes the
+  document root and projects the cached state synchronously into newly created
+  docked or floating sidebars, including repeated edge-hover lifecycles.
+- Settings and responsive layout changes no longer invalidate the verified
+  renderer or discard updates. Returning from Settings remounts the panel from
+  cached state while the permanent native-card policy prevents a visible
+  fallback frame.
+
 ## [0.4.4] - 2026-07-22
 
 ### Fixed

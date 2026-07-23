@@ -4,9 +4,8 @@ import { join, resolve } from "node:path";
 import { readAppPageTargets, readBrowserIdentity } from "./endpoint.mjs";
 import { CdpSession } from "./session.mjs";
 
-const EARLY_SUPPRESSOR_PATH = Object.freeze(["src", "renderer", "early-suppress.js"]);
-const EARLY_REGISTRATION_TTL_MS = 30_000;
-const EARLY_OPERATION_TIMEOUT_MS = 2_500;
+const NATIVE_SUPPRESSOR_PATH = Object.freeze(["src", "renderer", "native-card-suppress.js"]);
+const NATIVE_OPERATION_TIMEOUT_MS = 2_500;
 const TARGET_POLL_INTERVAL_MS = 50;
 const TARGET_SETTLE_MS = 500;
 const CDP_STEP_TIMEOUT_MS = 500;
@@ -32,7 +31,7 @@ function withTimeout(promise, timeoutMs, label) {
 
 function assertBrowserIdentity(identity, browserId, browserWebSocketUrl) {
   if (identity.browserId !== browserId || identity.webSocketDebuggerUrl !== browserWebSocketUrl) {
-    const error = new Error("The Codex browser identity changed before early quota suppression");
+    const error = new Error("The Codex browser identity changed before native quota suppression");
     error.code = "E_BROWSER_ID_CHANGED";
     throw error;
   }
@@ -52,7 +51,12 @@ function deadlineCall(operation, deadlineAtMs, now, label, capMs = Number.POSITI
   }
 }
 
-export async function installEarlyQuotaSuppression({
+function assertEvaluationSucceeded(evaluation, label) {
+  if (evaluation?.exceptionDetails) throw new Error(`${label} failed`);
+  return evaluation;
+}
+
+export async function installNativeQuotaSuppression({
   engineRoot,
   port,
   browserId,
@@ -60,7 +64,7 @@ export async function installEarlyQuotaSuppression({
   fetchImpl = globalThis.fetch,
   WebSocketImpl = globalThis.WebSocket,
   requestTimeoutMs = 2_000,
-  operationTimeoutMs = EARLY_OPERATION_TIMEOUT_MS,
+  operationTimeoutMs = NATIVE_OPERATION_TIMEOUT_MS,
   targetPollMs = TARGET_POLL_INTERVAL_MS,
   targetSettleMs = TARGET_SETTLE_MS,
   readSource = readFile,
@@ -94,18 +98,14 @@ export async function installEarlyQuotaSuppression({
 
   const startedAtMs = now();
   const deadlineAtMs = startedAtMs + operationTimeoutMs;
-  const suppressionExpiresAtMs = startedAtMs + EARLY_REGISTRATION_TTL_MS;
   const [identity, source] = await deadlineCall(() => Promise.all([
     readIdentity({ port, fetchImpl, timeoutMs: Math.min(requestTimeoutMs, operationTimeoutMs) }),
-    readSource(join(resolve(engineRoot), ...EARLY_SUPPRESSOR_PATH), "utf8"),
-  ]), deadlineAtMs, now, "Early suppression preparation", operationTimeoutMs);
+    readSource(join(resolve(engineRoot), ...NATIVE_SUPPRESSOR_PATH), "utf8"),
+  ]), deadlineAtMs, now, "Native suppression preparation", operationTimeoutMs);
   assertBrowserIdentity(identity, browserId, browserWebSocketUrl);
-  if (typeof source !== "string" || !source.trim()) throw new Error("Early quota suppressor source is empty");
+  if (typeof source !== "string" || !source.trim()) throw new Error("Native quota suppressor source is empty");
 
-  const executionSource = `((__codexQuotaEarlyDeadlineMs) => {\n`
-    + `  if (Date.now() >= __codexQuotaEarlyDeadlineMs) return { active: false, reason: "deadline-expired" };\n`
-    + `  return ${source}\n`
-    + `})(${Math.trunc(suppressionExpiresAtMs)})`;
+  const executionSource = source;
   const results = [];
   const discoveredTargets = new Set();
   const successfulTargets = new Set();
@@ -125,17 +125,17 @@ export async function installEarlyQuotaSuppression({
         () => session.connect(),
         deadlineAtMs,
         now,
-        "Early suppressor CDP connection",
+        "Native suppressor CDP connection",
         stepTimeoutMs,
       );
       await deadlineCall(
         () => session.send("Page.addScriptToEvaluateOnNewDocument", { source: executionSource }),
         deadlineAtMs,
         now,
-        "Early suppressor document registration",
+        "Native suppressor document registration",
         stepTimeoutMs,
       );
-      await deadlineCall(
+      const evaluation = await deadlineCall(
         () => session.send("Runtime.evaluate", {
           expression: executionSource,
           awaitPromise: false,
@@ -144,9 +144,10 @@ export async function installEarlyQuotaSuppression({
         }),
         deadlineAtMs,
         now,
-        "Early suppressor current-document evaluation",
+        "Native suppressor current-document evaluation",
         stepTimeoutMs,
       );
+      assertEvaluationSucceeded(evaluation, "Native suppressor current-document evaluation");
       return { targetId: target.id, ok: true };
     } catch (error) {
       return { targetId: target.id, ok: false, error };
@@ -166,10 +167,10 @@ export async function installEarlyQuotaSuppression({
         }),
         deadlineAtMs,
         now,
-        "Early suppressor target discovery",
+        "Native suppressor target discovery",
         requestTimeoutMs,
       );
-      if (!Array.isArray(targets)) throw new TypeError("Early suppressor target discovery was invalid");
+      if (!Array.isArray(targets)) throw new TypeError("Native suppressor target discovery was invalid");
     } catch {
       targets = [];
     }
@@ -198,7 +199,7 @@ export async function installEarlyQuotaSuppression({
           }),
           deadlineAtMs,
           now,
-          "Early suppressor identity revalidation",
+          "Native suppressor identity revalidation",
           requestTimeoutMs,
         );
         assertBrowserIdentity(confirmedIdentity, browserId, browserWebSocketUrl);
@@ -228,7 +229,7 @@ export async function installEarlyQuotaSuppression({
       : Math.min(deadlineAtMs, settleDeadlineAtMs);
     const delayMs = Math.min(targetPollMs, remainingMs(pollingDeadlineAtMs, now));
     if (delayMs <= 0) break;
-    await deadlineCall(() => sleep(delayMs), pollingDeadlineAtMs, now, "Early suppressor target wait");
+    await deadlineCall(() => sleep(delayMs), pollingDeadlineAtMs, now, "Native suppressor target wait");
   }
 
   return Object.freeze({

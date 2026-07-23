@@ -1,7 +1,7 @@
 # Release guide
 
 This project publishes stable releases from Windows GitHub Actions. The current
-release is `0.4.4`; use the same checklist for later versions.
+release is `0.4.5`; use the same checklist for later versions.
 
 ## One-time setup
 

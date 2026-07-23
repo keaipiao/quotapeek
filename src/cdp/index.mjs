@@ -15,6 +15,7 @@ export {
 } from "./endpoint.mjs";
 export { CdpSession } from "./session.mjs";
 export { CdpWatcher, DEFAULT_CODEX_RENDERER_PROBE } from "./watcher.mjs";
+export { installNativeQuotaSuppression } from "./native-suppressor.mjs";
 export {
   createWindowsOwnerValidator,
   inspectCdpEndpoint,

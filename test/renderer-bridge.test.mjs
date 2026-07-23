@@ -33,6 +33,27 @@ function rendererArgument(expression, method) {
   return JSON.parse(expression.slice(start + prefix.length, end));
 }
 
+test("renderer bridge supplies an independent static document-start suppressor", async () => {
+  let startOptions;
+  const watcher = {
+    async start(options) { startOptions = options; },
+    async evaluateAll() { return []; },
+    async close() {},
+  };
+  const bridge = new RendererBridge({ watcher, engineRoot: process.cwd() });
+
+  await bridge.start();
+
+  assert.equal(typeof startOptions.bootstrapSource, "string");
+  assert.equal(typeof startOptions.documentStartSource, "string");
+  assert.match(startOptions.bootstrapSource, /codexQuotaPanelBootstrap/);
+  assert.match(startOptions.documentStartSource, /codexQuotaNativeCardSuppressor/);
+  assert.match(startOptions.documentStartSource, /codex-quota-native-card-suppressor/);
+  assert.notEqual(startOptions.documentStartSource, startOptions.bootstrapSource);
+  assert.doesNotMatch(startOptions.documentStartSource, /codexQuotaPanelBootstrap|remainingPercent|fetchedAtMs/);
+  assert.doesNotMatch(startOptions.bootstrapSource, /codexQuotaNativeCardSuppressor/);
+});
+
 test("renderer bridge serializes only normalized quota data", async () => {
   const expressions = [];
   const watcher = {

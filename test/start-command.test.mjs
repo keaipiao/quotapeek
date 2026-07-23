@@ -79,8 +79,8 @@ function harness(overrides = {}) {
       events.push(["launch", options]);
       return launchFixture(options.port ?? 54321);
     },
-    installEarlyQuotaSuppression: async (options) => {
-      events.push(["early-suppress", options]);
+    installNativeQuotaSuppression: async (options) => {
+      events.push(["native-suppress", options]);
       return { attempted: 1, injected: 1 };
     },
     chooseLoopbackPort: async () => 54321,
@@ -196,21 +196,21 @@ test("starts through the installed runtime and records verified daemon identity"
   ]);
   assert.equal(spawn[2].foreground, true);
   assert.equal(spawn[2].logsPath, PATHS.logs);
-  const early = h.events.find(([name]) => name === "early-suppress");
-  assert.deepEqual(early[1], {
+  const nativeSuppression = h.events.find(([name]) => name === "native-suppress");
+  assert.deepEqual(nativeSuppression[1], {
     engineRoot: ENGINE,
     port: 55000,
     browserId: "browser-fixture",
     browserWebSocketUrl: "ws://127.0.0.1:55000/devtools/browser/browser-fixture"
   });
-  assert.ok(h.events.findIndex(([name]) => name === "launch") < h.events.indexOf(early));
-  assert.ok(h.events.indexOf(early) < h.events.indexOf(spawn));
+  assert.ok(h.events.findIndex(([name]) => name === "launch") < h.events.indexOf(nativeSuppression));
+  assert.ok(h.events.indexOf(nativeSuppression) < h.events.indexOf(spawn));
 });
 
-test("early suppression is best-effort and cannot block daemon startup", async () => {
+test("native suppression is best-effort and cannot block daemon startup", async () => {
   const h = harness({
     dependencies: {
-      installEarlyQuotaSuppression: async () => {
+      installNativeQuotaSuppression: async () => {
         throw new Error("renderer not ready");
       }
     }
@@ -221,10 +221,10 @@ test("early suppression is best-effort and cannot block daemon startup", async (
   assert.equal(h.events.some(([name]) => name === "spawn"), true);
 });
 
-test("a permanently pending early suppressor cannot delay daemon identity transfer", { timeout: 500 }, async () => {
+test("a permanently pending native suppressor cannot delay daemon identity transfer", { timeout: 500 }, async () => {
   const h = harness({
     dependencies: {
-      installEarlyQuotaSuppression: () => new Promise(() => {}),
+      installNativeQuotaSuppression: () => new Promise(() => {}),
     },
   });
 

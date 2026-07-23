@@ -44,10 +44,12 @@ running, its official icon can still bring the same process to the foreground.
 
 The panel follows the Codex interface language automatically. English,
 Simplified Chinese, and Traditional Chinese are built in; other languages fall
-back to English. Codex Quota identifies the native low-usage alert by its UI
-structure rather than translated text and suppresses it during startup while
-the first quota snapshot loads. Other equivalent native quota surfaces are
-hidden while usable data is available.
+back to English. Codex Quota identifies the native low-usage card by its exact
+UI structure rather than translated text. A document-lifetime policy hides its
+docked, floating-sidebar, and compact-window copies from startup onward,
+independently of quota loading. The custom panel keeps the latest snapshot
+while the sidebar is absent and appears immediately when either sidebar
+surface is created.
 
 ### Data freshness
 

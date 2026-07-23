@@ -16,7 +16,7 @@ import { redactLogText } from "../host/logger.mjs";
 import { PACKAGE_ROOT, getPaths } from "../paths.mjs";
 import { createSessionRecord, updateSession } from "../session-state.mjs";
 import { chooseLoopbackPort } from "../cdp/loopback.mjs";
-import { installEarlyQuotaSuppression } from "../cdp/early-suppressor.mjs";
+import { installNativeQuotaSuppression } from "../cdp/native-suppressor.mjs";
 import { launchCodexWithCdp } from "../cdp/windows-launcher.mjs";
 import { getInstalledRuntime } from "./install.mjs";
 
@@ -222,7 +222,7 @@ export async function startCommand(options = {}, dependencies = {}) {
     updateSession,
     launchCodexWithCdp,
     chooseLoopbackPort,
-    installEarlyQuotaSuppression,
+    installNativeQuotaSuppression,
     createNonce: randomUUID,
     buildDaemonSpec,
     spawnDaemon,
@@ -365,19 +365,19 @@ export async function startCommand(options = {}, dependencies = {}) {
     await services.writeJsonAtomic(paths.session, pending);
     const launch = await services.launchCodexWithCdp({ port: launchPort });
 
-    // Start the short-lived visual guard at the earliest safely verified
-    // point. It is intentionally fire-and-forget: the helper has its own
-    // bounded deadline, and daemon identity transfer must never wait for a
-    // cosmetic startup optimization.
+    // Install the document-lifetime native-card policy at the earliest safely
+    // verified point. It is intentionally fire-and-forget: target discovery
+    // is bounded, while the installed stylesheet itself has no visual gap.
     try {
-      void Promise.resolve(services.installEarlyQuotaSuppression({
+      void Promise.resolve(services.installNativeQuotaSuppression({
         engineRoot: runtime.engineRoot,
         port: launch.port,
         browserId: launch.browserId,
         browserWebSocketUrl: launch.browserWebSocketUrl,
       })).catch(() => null);
     } catch {
-      // Renderer startup suppression is best-effort.
+      // The daemon watcher performs the same idempotent registration shortly
+      // afterwards, so this earliest-start path remains best-effort.
     }
 
     const session = services.createSessionRecord(mapLaunchToSessionInput(launch), {

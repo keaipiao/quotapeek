@@ -2,11 +2,13 @@
   "use strict";
 
   const GLOBAL_KEY = "__CODEX_QUOTA_PANEL__";
-  const VERSION = "0.4.4";
+  const CONTROLLER_ID = "codex-quota-sidebar-projection-v1";
+  const VERSION = "0.4.5";
   const HOST_ID = "codex-quota-panel";
-  const SIDEBAR_SELECTOR = "aside.app-shell-left-panel";
-  const NATIVE_HIDDEN_ATTR = "data-codex-quota-native-hidden";
-  const EARLY_NATIVE_GLOBAL_KEY = "__CODEX_QUOTA_EARLY_NATIVE_SUPPRESSOR__";
+  const SIDEBAR_SELECTORS = Object.freeze([
+    "aside.app-shell-left-panel",
+    'aside[data-testid="app-shell-floating-left-panel"]',
+  ]);
   const GENERAL_BUCKET_ID = "codex";
   const SPARK_LIMIT_NAME = "gpt-5.3-codex-spark";
   // Compatibility labels for public plans currently represented by the
@@ -32,7 +34,6 @@
   const LOCALE_CHECK_MS = 5 * 1000;
   const MAX_REACT_FIBERS_FOR_LOCALE = 12_000;
   const RECONCILE_DEBOUNCE_MS = 80;
-  const STARTUP_NATIVE_SUPPRESSION_MS = 15_000;
   const MOUNT_RETRY_DELAYS_MS = Object.freeze([100, 200, 400, 800, 1_200, 1_600, 2_000, 2_000, 2_000]);
   const MIN_ANCHOR_SCORE = 62;
   const UNIQUE_SCORE_MARGIN = 12;
@@ -286,7 +287,7 @@
     return messages.unavailable;
   }
 
-  function shellCheck() {
+  function rendererCheck() {
     try {
       if (!runtime.location || runtime.location.protocol !== "app:") {
         return { ok: false, reason: "protocol-not-allowed" };
@@ -294,15 +295,34 @@
       if (!documentRef || typeof documentRef.querySelector !== "function") {
         return { ok: false, reason: "document-unavailable" };
       }
-      const main = documentRef.querySelector("main.main-surface");
-      const sidebar = documentRef.querySelector(SIDEBAR_SELECTOR);
-      const conversation = documentRef.querySelector(".composer-surface-chrome")
-        || documentRef.querySelector("[role=\"main\"]");
-      if (!main || !sidebar || !conversation) return { ok: false, reason: "main-shell-not-ready" };
-      return { ok: true, reason: null, sidebar };
+      return { ok: true, reason: null };
     } catch {
-      return { ok: false, reason: "main-shell-check-failed" };
+      return { ok: false, reason: "renderer-check-failed" };
     }
+  }
+
+  function sidebarSurfaces() {
+    if (!documentRef || typeof documentRef.querySelector !== "function") return [];
+    const surfaces = [];
+    for (const selector of SIDEBAR_SELECTORS) {
+      let element = null;
+      try { element = documentRef.querySelector(selector); } catch { element = null; }
+      if (!element || !element.isConnected || surfaces.includes(element)) continue;
+      const rect = rectFrom(element);
+      if (!rect || rect.width <= 0 || rect.height <= 0) continue;
+      surfaces.push(element);
+    }
+    return surfaces;
+  }
+
+  function findActiveSidebar() {
+    const surfaces = sidebarSurfaces();
+    if (!surfaces.length) return null;
+    const floating = surfaces.find((element) => (
+      element.getAttribute
+      && element.getAttribute("data-testid") === "app-shell-floating-left-panel"
+    ));
+    return floating || surfaces.find((element) => element === state.sidebar) || surfaces[0];
   }
 
   function finiteNumber(value) {
@@ -765,15 +785,12 @@
     host: null,
     shadow: null,
     panel: null,
-    observer: null,
-    observerTarget: null,
+    lifecycleObserver: null,
+    ownedHosts: new WeakSet(),
     resizeObserver: null,
     scrollRegions: null,
     scrollDock: null,
     sidebarBaseline: null,
-    nativeQuotaHidden: new Map(),
-    startupSuppressionUntilMs: now() + STARTUP_NATIVE_SUPPRESSION_MS,
-    startupSuppressionTimer: null,
     domReadyHandler: null,
     reconcileTimer: null,
     mountRetryTimer: null,
@@ -1079,23 +1096,6 @@
     style[camelName] = "";
   }
 
-  function earlyNativeSuppressionActive() {
-    const suppressor = runtime[EARLY_NATIVE_GLOBAL_KEY];
-    if (!suppressor || typeof suppressor.status !== "function") return false;
-    try { return suppressor.status().active === true; } catch { return false; }
-  }
-
-  function cleanupEarlyNativeSuppression(reason = "panel-takeover") {
-    const suppressor = runtime[EARLY_NATIVE_GLOBAL_KEY];
-    if (!suppressor || typeof suppressor.cleanup !== "function") return false;
-    try {
-      suppressor.cleanup(reason);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
   function restoreScrollDock() {
     const dock = state.scrollDock;
     state.scrollDock = null;
@@ -1142,275 +1142,6 @@
       : null;
     state.scrollDock = dock;
     return element;
-  }
-
-  function subtreeText(element) {
-    if (!element) return "";
-    const pieces = [element.innerText, element.textContent];
-    try {
-      for (const descendant of Array.from(element.querySelectorAll("*")).slice(0, 80)) {
-        pieces.push(descendant.textContent);
-      }
-    } catch {
-      // A candidate without an inspectable subtree is not hidden.
-    }
-    return pieces.filter((value) => typeof value === "string" && value).join(" ").slice(0, 2_000);
-  }
-
-  function nativeQuotaScore(element) {
-    if (!element || element === state.host
-      || (state.host && element.contains(state.host))
-      || (state.anchor && element.contains(state.anchor))) return null;
-    const tag = String(element.tagName || "").toLowerCase();
-    const role = String(element.getAttribute && element.getAttribute("role") || "").toLowerCase();
-    if (tag === "nav" || role === "list" || role === "listitem" || role === "navigation") return null;
-    if (element.hasAttribute && (element.hasAttribute("data-app-action-sidebar-scroll")
-      || element.getAttribute("aria-hidden") === "true")) return null;
-
-    let descendants = [];
-    try { descendants = Array.from(element.querySelectorAll("*")).slice(0, 80); } catch { descendants = []; }
-    const nodes = [element, ...descendants];
-    if (nodes.some((node) => {
-      const nodeTag = String(node.tagName || "").toLowerCase();
-      const nodeRole = String(node.getAttribute && node.getAttribute("role") || "").toLowerCase();
-      return nodeTag === "nav" || nodeRole === "list" || nodeRole === "listitem" || nodeRole === "navigation"
-        || (node.hasAttribute && node.hasAttribute("data-app-action-sidebar-scroll"));
-    })) return null;
-    const attributes = nodes.map((node) => [
-      node.id,
-      node.getAttribute && node.getAttribute("data-testid"),
-      node.getAttribute && node.getAttribute("data-slot"),
-      node.getAttribute && node.getAttribute("aria-label"),
-    ].filter(Boolean).join(" ")).join(" ");
-    const text = subtreeText(element);
-    const semanticPattern = /(?:usage\s+remaining|remaining\s+usage|rate\s*limits?|quota|剩余(?:额度|用量)|额度|限额|用量|剩餘(?:額度|用量)|額度|限額)/i;
-    const attributeSignal = semanticPattern.test(attributes);
-    const textSignal = semanticPattern.test(text);
-    const percentSignal = /(?:^|\s)\d{1,3}(?:\.\d+)?\s*%/.test(text);
-    const meterSignal = nodes.some((node) => {
-      const nodeRole = String(node.getAttribute && node.getAttribute("role") || "").toLowerCase();
-      return nodeRole === "progressbar" || nodeRole === "meter"
-        || String(node.tagName || "").toLowerCase() === "progress";
-    });
-    const resetSignal = /(?:resets?|refresh|重置|刷新|重設|重新整理)/i.test(text);
-    const signals = [attributeSignal, textSignal, percentSignal, meterSignal, resetSignal].filter(Boolean).length;
-    if ((!attributeSignal && !textSignal) || signals < 2) return null;
-    const score = (attributeSignal ? 55 : 0) + (textSignal ? 30 : 0)
-      + (percentSignal ? 25 : 0) + (meterSignal ? 25 : 0) + (resetSignal ? 10 : 0);
-    return score >= 55 ? score : null;
-  }
-
-  function findNativeFooterQuotaCandidate(sidebar, anchor) {
-    if (!sidebar || !anchor) return null;
-    const scored = [];
-    const parent = anchor.parentElement;
-    if (!parent || !sidebar.contains(parent)) return null;
-    const sidebarRect = rectFrom(sidebar);
-    const anchorRect = rectFrom(anchor);
-    for (const sibling of Array.from(parent.children || [])) {
-      if (sibling === anchor) break;
-      if (sibling === state.host) continue;
-      const siblingRect = rectFrom(sibling);
-      const alreadyHidden = state.nativeQuotaHidden.has(sibling);
-      if (!sidebarRect || !anchorRect || !siblingRect) continue;
-      if (!alreadyHidden) {
-        if (siblingRect.height <= 0) continue;
-        if (siblingRect.height > Math.max(180, sidebarRect.height * 0.28)) continue;
-        if (siblingRect.left < sidebarRect.left - 2 || siblingRect.right > sidebarRect.right + 2) continue;
-        if (siblingRect.bottom > anchorRect.top + 2) continue;
-      }
-      const score = nativeQuotaScore(sibling);
-      if (score !== null) scored.push({ element: sibling, score });
-    }
-    scored.sort((left, right) => right.score - left.score);
-    if (scored.length !== 1) return null;
-    return scored[0].element;
-  }
-
-  function isInsideSidebarNavigation(element, sidebar) {
-    for (let current = element; current && current !== sidebar; current = current.parentElement) {
-      const tag = String(current.tagName || "").toLowerCase();
-      const role = String(current.getAttribute && current.getAttribute("role") || "").toLowerCase();
-      if (tag === "nav" || role === "list" || role === "listitem" || role === "navigation"
-        || (current.hasAttribute && current.hasAttribute("data-app-action-sidebar-scroll"))) return true;
-    }
-    return false;
-  }
-
-  function nativeLowUsageAlertScore(element) {
-    // Match the native low-usage component itself, never translated copy. The
-    // current Codex component is a polite status with a two-row header, a
-    // direct native progress element, and an optional action row. Keeping the
-    // signature structural makes it work for every UI language while still
-    // failing closed around unrelated status/progress surfaces.
-    if (!element || String(element.getAttribute && element.getAttribute("role") || "").toLowerCase() !== "status"
-      || String(element.getAttribute && element.getAttribute("aria-live") || "").toLowerCase() !== "polite"
-      || String(element.tagName || "").toLowerCase() !== "div") {
-      return null;
-    }
-    const classTokens = new Set(String(element.className || "").split(/\s+/).filter(Boolean));
-    const nativeClassSignature = ["flex", "w-full", "flex-col", "rounded-2xl", "border"];
-    if (!nativeClassSignature.every((token) => classTokens.has(token))) return null;
-    let descendants = [];
-    try { descendants = Array.from(element.querySelectorAll("*")).slice(0, 80); } catch { descendants = []; }
-    const children = Array.from(element.children || []);
-    if (children.length < 2 || children.length > 3) return null;
-    const [header, progress, actions] = children;
-    if (String(header && header.tagName || "").toLowerCase() !== "div"
-      || String(progress && progress.tagName || "").toLowerCase() !== "progress") return null;
-
-    const progressNodes = descendants.filter((node) => String(node.tagName || "").toLowerCase() === "progress");
-    if (progressNodes.length !== 1 || progressNodes[0] !== progress) return null;
-    const maximum = Number(progress.getAttribute && progress.getAttribute("max") || progress.max);
-    const value = Number(progress.getAttribute && progress.getAttribute("value") || progress.value);
-    const progressLabel = String(progress.getAttribute && progress.getAttribute("aria-label") || "").trim();
-    if (!Number.isFinite(maximum) || Math.abs(maximum - 100) > 0.01
-      || !Number.isFinite(value) || value < 0 || value > 100 || !progressLabel) return null;
-
-    const headerChildren = Array.from(header.children || []);
-    if (headerChildren.length < 1 || headerChildren.length > 2) return null;
-    const titleRow = headerChildren[0];
-    if (String(titleRow && titleRow.tagName || "").toLowerCase() !== "div") return null;
-    const titleChildren = Array.from(titleRow.children || []);
-    if (titleChildren.length !== 2
-      || String(titleChildren[0].tagName || "").toLowerCase() !== "span"
-      || String(titleChildren[1].tagName || "").toLowerCase() !== "button") return null;
-    const dismiss = titleChildren[1];
-    const dismissType = String(dismiss.getAttribute && dismiss.getAttribute("type") || "").toLowerCase();
-    const dismissLabel = String(dismiss.getAttribute && dismiss.getAttribute("aria-label") || "").trim();
-    const dismissClassTokens = new Set(String(dismiss.className || "").split(/\s+/).filter(Boolean));
-    if (dismissType !== "button" || !dismissLabel || !dismissClassTokens.has("no-drag")) return null;
-    if (headerChildren[1] && String(headerChildren[1].tagName || "").toLowerCase() !== "div") return null;
-
-    if (actions) {
-      if (String(actions.tagName || "").toLowerCase() !== "div") return null;
-      const actionChildren = Array.from(actions.children || []);
-      if (!actionChildren.length || actionChildren.some((node) => {
-        const tag = String(node.tagName || "").toLowerCase();
-        const role = String(node.getAttribute && node.getAttribute("role") || "").toLowerCase();
-        return tag !== "button" && role !== "button";
-      })) return null;
-    }
-
-    return 320 + (value >= 80 ? 5 : 0);
-  }
-
-  function findNativeLowUsageAlertCandidate(sidebar, anchor) {
-    if (!sidebar || !anchor || typeof sidebar.querySelectorAll !== "function") return null;
-    const sidebarRect = rectFrom(sidebar);
-    const anchorRect = rectFrom(anchor);
-    if (!sidebarRect || !anchorRect) return null;
-    let elements = [];
-    try {
-      elements = Array.from(sidebar.querySelectorAll('[role="status"][aria-live="polite"]')).slice(0, 20);
-    } catch {
-      elements = [];
-    }
-    const scored = [];
-    for (const element of elements) {
-      const score = nativeLowUsageAlertScore(element);
-      if (score === null || isInsideSidebarNavigation(element, sidebar)) continue;
-      const parent = element.parentElement;
-      // The native component adds its bottom spacing to a single-child wrapper.
-      // Hide that wrapper as well so no empty gap remains above our panel.
-      const candidate = parent && parent !== sidebar && Array.from(parent.children || []).length === 1
-        ? parent
-        : element;
-      if (candidate === state.host || (state.host && candidate.contains(state.host))
-        || candidate.contains(anchor) || isInsideSidebarNavigation(candidate, sidebar)) continue;
-      const candidateRect = rectFrom(candidate);
-      const alreadyHidden = state.nativeQuotaHidden.has(candidate);
-      const earlySuppressed = earlyNativeSuppressionActive();
-      if (!candidateRect) continue;
-      if (!alreadyHidden && !earlySuppressed) {
-        if (candidateRect.height <= 0 || candidateRect.height > Math.max(220, sidebarRect.height * 0.32)) continue;
-        if (candidateRect.width < sidebarRect.width * 0.55) continue;
-        if (candidateRect.left < sidebarRect.left - 2 || candidateRect.right > sidebarRect.right + 2) continue;
-        if (candidateRect.top < sidebarRect.top - 2 || candidateRect.bottom > anchorRect.top + 2) continue;
-      }
-      scored.push({ element: candidate, score });
-    }
-    scored.sort((left, right) => right.score - left.score);
-    if (scored.length !== 1) return null;
-    return scored[0].element;
-  }
-
-  function findNativeQuotaCandidates(sidebar, anchor, options = {}) {
-    const includeFooter = options.includeFooter !== false;
-    const includeLowUsageAlert = options.includeLowUsageAlert !== false;
-    const candidates = [
-      includeFooter ? findNativeFooterQuotaCandidate(sidebar, anchor) : null,
-      includeLowUsageAlert ? findNativeLowUsageAlertCandidate(sidebar, anchor) : null,
-    ].filter(Boolean);
-    return Array.from(new Set(candidates));
-  }
-
-  function restoreNativeQuota(except = null) {
-    const preserved = except instanceof Set ? except : except ? new Set([except]) : null;
-    let changed = false;
-    for (const [element, snapshot] of state.nativeQuotaHidden) {
-      if (preserved && preserved.has(element)) continue;
-      const markerOwned = element && element.getAttribute
-        && element.getAttribute(NATIVE_HIDDEN_ATTR) === VERSION;
-      const display = readInlineStyle(element, "display");
-      if (markerOwned && display.value === "none" && display.priority === "important") {
-        restoreInlineStyle(element, "display", snapshot.display);
-      }
-      if (markerOwned && element && typeof element.setAttribute === "function") {
-        if (snapshot.markerPresent) element.setAttribute(NATIVE_HIDDEN_ATTR, snapshot.markerValue);
-        else if (typeof element.removeAttribute === "function") element.removeAttribute(NATIVE_HIDDEN_ATTR);
-      }
-      state.nativeQuotaHidden.delete(element);
-      changed = true;
-    }
-    return changed;
-  }
-
-  function syncNativeQuotaVisibility() {
-    const generalBucket = selectGeneralBucket(state.snapshot ? state.snapshot.buckets : []);
-    const currentFreshness = freshness(
-      state.snapshot,
-      now(),
-      state.explicitlyUnavailable,
-      state.cachedSnapshot
-    );
-    const panelConnected = Boolean(state.host && state.host.isConnected);
-    const hasUsableGeneralQuota = Boolean(generalBucket && currentFreshness !== "unavailable");
-    const startupPending = state.snapshot === null && !state.explicitlyUnavailable
-      && now() < state.startupSuppressionUntilMs;
-    const shouldHideLowUsageAlert = panelConnected && (startupPending || hasUsableGeneralQuota);
-    const shouldHideFooter = panelConnected && state.geometryValidated && hasUsableGeneralQuota;
-    if (!shouldHideLowUsageAlert && !shouldHideFooter) return restoreNativeQuota();
-
-    const candidates = findNativeQuotaCandidates(state.sidebar, state.anchor, {
-      includeFooter: shouldHideFooter,
-      includeLowUsageAlert: shouldHideLowUsageAlert,
-    });
-    const preserved = new Set(candidates);
-    let changed = restoreNativeQuota(preserved);
-    for (const candidate of candidates) {
-      if (!state.nativeQuotaHidden.has(candidate)) {
-        state.nativeQuotaHidden.set(candidate, {
-          display: readInlineStyle(candidate, "display"),
-          markerPresent: candidate.hasAttribute && candidate.hasAttribute(NATIVE_HIDDEN_ATTR),
-          markerValue: candidate.getAttribute && candidate.getAttribute(NATIVE_HIDDEN_ATTR),
-        });
-        candidate.setAttribute(NATIVE_HIDDEN_ATTR, VERSION);
-        writeInlineStyle(candidate, "display", "none", "important");
-        changed = true;
-      } else {
-        const display = readInlineStyle(candidate, "display");
-        if (candidate.getAttribute(NATIVE_HIDDEN_ATTR) !== VERSION) {
-          candidate.setAttribute(NATIVE_HIDDEN_ATTR, VERSION);
-          changed = true;
-        }
-        if (display.value !== "none" || display.priority !== "important") {
-          writeInlineStyle(candidate, "display", "none", "important");
-          changed = true;
-        }
-      }
-    }
-    return changed;
   }
 
   function findScrollRegions(sidebar, anchor) {
@@ -1570,7 +1301,6 @@
 
   function detachPanel(reason) {
     stopResizeObserver();
-    restoreNativeQuota();
     restoreScrollDock();
     if (state.host && state.host.parentNode) state.host.parentNode.removeChild(state.host);
     state.sidebar = null;
@@ -1587,10 +1317,9 @@
     state.reason = reason || "detached";
   }
 
-  function stopMutationObserver() {
-    if (state.observer) state.observer.disconnect();
-    state.observer = null;
-    state.observerTarget = null;
+  function stopLifecycleObserver() {
+    if (state.lifecycleObserver) state.lifecycleObserver.disconnect();
+    state.lifecycleObserver = null;
     if (state.reconcileTimer !== null) runtime.clearTimeout(state.reconcileTimer);
     state.reconcileTimer = null;
   }
@@ -1601,7 +1330,7 @@
   }
 
   function stopObservers() {
-    stopMutationObserver();
+    stopLifecycleObserver();
     stopResizeObserver();
   }
 
@@ -1631,22 +1360,69 @@
     }, delayMs);
   }
 
-  function observeForRebuild(sidebar) {
-    if (typeof runtime.MutationObserver !== "function") return;
-    const target = (sidebar && sidebar.parentElement) || documentRef.documentElement || documentRef.body;
-    if (!target || (state.observer && state.observerTarget === target)) return;
-    stopMutationObserver();
-    state.observer = new runtime.MutationObserver(() => {
-      // MutationObserver callbacks run before the next paint. Suppress a newly
-      // inserted native alert synchronously, then debounce the heavier layout
-      // and anchor validation work as before.
-      if (state.host && state.host.isConnected && state.sidebar && state.anchor) {
-        syncNativeQuotaVisibility();
-      }
-      scheduleReconcile();
+  function surfaceIsHealthy(sidebar = findActiveSidebar()) {
+    return Boolean(sidebar && sidebar === state.sidebar
+      && state.host && state.host.isConnected
+      && state.anchor && state.anchor.isConnected
+      && state.host.nextSibling === state.anchor);
+  }
+
+  function containsOnlyOwnedHostMutations(records) {
+    if (!Array.isArray(records) || !records.length) return false;
+    let changedNodeCount = 0;
+    for (const record of records) {
+      const nodes = [
+        ...Array.from(record && record.addedNodes || []),
+        ...Array.from(record && record.removedNodes || []),
+      ];
+      if (!nodes.length) return false;
+      changedNodeCount += nodes.length;
+      if (nodes.some((node) => !state.ownedHosts.has(node))) return false;
+    }
+    return changedNodeCount > 0;
+  }
+
+  function onLifecycleMutation(records) {
+    if (state.cleaned) return;
+    if (containsOnlyOwnedHostMutations(records)) {
+      // Our own insert/remove records need no reconciliation. If some other
+      // owner removed the currently projected host, however, restore it in
+      // this same pre-paint callback.
+      if (state.host && !state.host.isConnected && findActiveSidebar()) mount();
+      return;
+    }
+    const renderer = rendererCheck();
+    if (!renderer.ok) {
+      detachPanel(renderer.reason);
+      return;
+    }
+    const sidebar = findActiveSidebar();
+    if (!sidebar) {
+      if (state.host || state.sidebar) detachPanel("sidebar-not-present");
+      scheduleMountRetry();
+      return;
+    }
+    // Surface projection is intentionally synchronous here. MutationObserver
+    // callbacks complete before paint, so a newly created floating/docked
+    // sidebar receives the cached quota panel in its first visible frame.
+    if (!surfaceIsHealthy(sidebar)) {
+      mount();
+      return;
+    }
+    scheduleReconcile();
+  }
+
+  function ensureLifecycleObserver() {
+    if (state.lifecycleObserver || typeof runtime.MutationObserver !== "function") return;
+    const target = documentRef.documentElement || documentRef;
+    if (!target) return;
+    state.lifecycleObserver = new runtime.MutationObserver(onLifecycleMutation);
+    state.lifecycleObserver.observe(target, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class", "hidden", "aria-hidden"],
     });
-    state.observer.observe(target, { childList: true, subtree: true });
-    state.observerTarget = target;
     if (!state.host || !state.host.isConnected) scheduleMountRetry();
   }
 
@@ -1690,49 +1466,46 @@
   function mount() {
     state.cleaned = false;
     ensureTimers();
-    const shell = shellCheck();
-    if (!shell.ok || !shell.sidebar.isConnected) {
-      stopObservers();
-      detachPanel(shell.ok ? "sidebar-not-connected" : shell.reason);
-      if (shell.reason === "protocol-not-allowed") cleanupEarlyNativeSuppression(shell.reason);
+    ensureLifecycleObserver();
+    const renderer = rendererCheck();
+    if (!renderer.ok) {
+      detachPanel(renderer.reason);
       if (runtime.location && runtime.location.protocol === "app:") {
         scheduleDomReadyMount();
-        observeForRebuild(null);
       }
+      return publicStatus();
+    }
+    const sidebar = findActiveSidebar();
+    if (!sidebar) {
+      detachPanel("sidebar-not-present");
+      scheduleDomReadyMount();
+      scheduleMountRetry();
       return publicStatus();
     }
     clearDomReadyMount();
-    const sidebar = shell.sidebar;
 
-    if (state.host && state.host.isConnected && state.sidebar === sidebar && state.anchor && state.anchor.isConnected) {
+    if (surfaceIsHealthy(sidebar)) {
       renderPreservingBottom();
       const validation = validateCurrentLayout();
       if (!validation.ok) {
-        stopObservers();
         detachPanel(validation.reason);
-        observeForRebuild(sidebar);
-      } else if (syncNativeQuotaVisibility()) {
-        scheduleReconcile();
+        scheduleMountRetry();
       }
-      cleanupEarlyNativeSuppression("existing-panel-ready");
       return publicStatus();
     }
 
-    // Do not observe our own insert/remove operations. Otherwise a failed
-    // geometry probe could continuously remount itself on its own mutations.
-    stopObservers();
     detachPanel("remounting");
     const anchorResult = findAnchor(sidebar);
     if (!anchorResult.candidate) {
       state.reason = anchorResult.reason;
-      observeForRebuild(sidebar);
+      scheduleMountRetry();
       return publicStatus();
     }
 
     const { anchor, parent, score } = anchorResult.candidate;
     if (!parent || anchor.parentElement !== parent) {
       state.reason = "anchor-detached";
-      observeForRebuild(sidebar);
+      scheduleMountRetry();
       return publicStatus();
     }
 
@@ -1754,6 +1527,7 @@
     shadow.appendChild(style);
     shadow.appendChild(panel);
 
+    state.ownedHosts.add(host);
     parent.insertBefore(host, anchor);
     state.sidebar = sidebar;
     state.anchor = anchor;
@@ -1765,14 +1539,12 @@
     state.anchorScore = score;
     state.mountedAtMs = now();
     state.reason = null;
-    syncNativeQuotaVisibility();
     render();
 
     const scrollDockElement = applyScrollDock(scrollRegions);
     if (!scrollDockElement) {
       detachPanel("conversation-scroll-dock-not-found");
-      cleanupEarlyNativeSuppression("conversation-scroll-dock-not-found");
-      observeForRebuild(sidebar);
+      scheduleMountRetry();
       return publicStatus();
     }
 
@@ -1787,16 +1559,13 @@
     );
     if (!validation.ok) {
       detachPanel(validation.reason);
-      cleanupEarlyNativeSuppression(validation.reason);
-      observeForRebuild(sidebar);
+      scheduleMountRetry();
       return publicStatus();
     }
     state.geometryValidated = !validation.pending;
     state.reason = validation.reason;
     clearMountRetry();
-    observeForRebuild(sidebar);
     observeForResize(sidebar, anchor, host, panel);
-    cleanupEarlyNativeSuppression("panel-ready");
 
     if (typeof runtime.requestAnimationFrame === "function") {
       runtime.requestAnimationFrame(() => runtime.requestAnimationFrame(() => {
@@ -1814,15 +1583,13 @@
           { enforceScrollRange: true, scrollDockElement }
         );
         if (!delayedValidation.ok) {
-          stopObservers();
           detachPanel(delayedValidation.reason);
-          observeForRebuild(sidebar);
+          scheduleMountRetry();
         }
         else {
           state.geometryValidated = true;
           state.reason = null;
           clearMountRetry();
-          if (syncNativeQuotaVisibility()) scheduleReconcile();
         }
       }));
     }
@@ -1831,51 +1598,36 @@
 
   function reconcile() {
     if (state.cleaned || !documentRef) return publicStatus();
-    const shell = shellCheck();
-    if (!shell.ok) {
-      stopObservers();
-      detachPanel(shell.reason);
-      if (shell.reason === "protocol-not-allowed") cleanupEarlyNativeSuppression(shell.reason);
+    ensureLifecycleObserver();
+    const renderer = rendererCheck();
+    if (!renderer.ok) {
+      detachPanel(renderer.reason);
       if (runtime.location && runtime.location.protocol === "app:") {
         scheduleDomReadyMount();
-        observeForRebuild(null);
       }
       return publicStatus();
     }
-    const sidebar = shell.sidebar;
-    const healthy = sidebar && sidebar === state.sidebar && state.host && state.host.isConnected
-      && state.anchor && state.anchor.isConnected && state.host.nextSibling === state.anchor;
-    if (!healthy) return mount();
+    const sidebar = findActiveSidebar();
+    if (!sidebar) {
+      detachPanel("sidebar-not-present");
+      scheduleMountRetry();
+      return publicStatus();
+    }
+    if (!surfaceIsHealthy(sidebar)) return mount();
     renderPreservingBottom();
     const validation = validateCurrentLayout();
     if (!validation.ok) {
-      stopObservers();
       detachPanel(validation.reason);
-      observeForRebuild(sidebar);
+      scheduleMountRetry();
     } else {
       state.geometryValidated = true;
       clearMountRetry();
-      if (syncNativeQuotaVisibility()) scheduleReconcile();
     }
     return publicStatus();
   }
 
   function update(value) {
     state.lastHeartbeatMs = now();
-    if (value == null || (value && typeof value === "object" && value.availability === "unavailable")) {
-      cleanupEarlyNativeSuppression("quota-update-unavailable");
-    }
-    const shell = shellCheck();
-    if (!shell.ok) {
-      stopObservers();
-      detachPanel(shell.reason);
-      if (shell.reason === "protocol-not-allowed") cleanupEarlyNativeSuppression(shell.reason);
-      if (runtime.location && runtime.location.protocol === "app:") {
-        scheduleDomReadyMount();
-        observeForRebuild(null);
-      }
-      return publicStatus();
-    }
     let rawSnapshot = value;
     let explicitlyUnavailable = false;
     let cachedSnapshot = false;
@@ -1900,10 +1652,6 @@
         ? reasonCode || "E_RATE_LIMIT_UNAVAILABLE"
         : null;
     }
-    if (state.explicitlyUnavailable
-      || !selectGeneralBucket(state.snapshot ? state.snapshot.buckets : [])) {
-      cleanupEarlyNativeSuppression("general-quota-unavailable");
-    }
     return reconcile();
   }
 
@@ -1916,18 +1664,6 @@
     state.explicitlyUnavailable = true;
     state.cachedSnapshot = false;
     state.unavailableReasonCode = reasonCode;
-    cleanupEarlyNativeSuppression("quota-unavailable");
-    const shell = shellCheck();
-    if (!shell.ok) {
-      stopObservers();
-      detachPanel(shell.reason);
-      if (shell.reason === "protocol-not-allowed") cleanupEarlyNativeSuppression(shell.reason);
-      if (runtime.location && runtime.location.protocol === "app:") {
-        scheduleDomReadyMount();
-        observeForRebuild(null);
-      }
-      return publicStatus();
-    }
     return reconcile();
   }
 
@@ -1946,27 +1682,17 @@
     if (state.countdownTimer !== null) runtime.clearInterval(state.countdownTimer);
     if (state.heartbeatTimer !== null) runtime.clearInterval(state.heartbeatTimer);
     if (state.localeTimer !== null) runtime.clearInterval(state.localeTimer);
-    if (state.startupSuppressionTimer !== null) runtime.clearTimeout(state.startupSuppressionTimer);
     if (state.languageChangeHandler && typeof runtime.removeEventListener === "function") {
       runtime.removeEventListener("languagechange", state.languageChangeHandler);
     }
     state.countdownTimer = null;
     state.heartbeatTimer = null;
     state.localeTimer = null;
-    state.startupSuppressionTimer = null;
     state.languageChangeHandler = null;
-    cleanupEarlyNativeSuppression(reason);
     return publicStatus();
   }
 
   function ensureTimers() {
-    if (state.startupSuppressionTimer === null && now() < state.startupSuppressionUntilMs) {
-      state.startupSuppressionTimer = runtime.setTimeout(() => {
-        state.startupSuppressionTimer = null;
-        cleanupEarlyNativeSuppression("startup-suppression-timeout");
-        if (!state.cleaned) reconcile();
-      }, Math.max(0, state.startupSuppressionUntilMs - now()));
-    }
     if (state.countdownTimer === null) {
       state.countdownTimer = runtime.setInterval(() => {
         if (state.host && state.host.isConnected) reconcile();
@@ -2013,11 +1739,15 @@
       bucketCount: state.snapshot ? state.snapshot.buckets.length : 0,
       displayedBucketCount: currentFreshness !== "unavailable"
         && selectGeneralBucket(state.snapshot ? state.snapshot.buckets : []) ? 1 : 0,
-      nativeQuotaHiddenCount: state.nativeQuotaHidden.size,
       scrollDocked: Boolean(state.scrollDock && state.scrollDock.element && state.scrollDock.element.isConnected),
       fetchedAtMs: state.snapshot ? state.snapshot.fetchedAtMs : null,
       lastHeartbeatMs: state.lastHeartbeatMs,
       sidebarConnected: Boolean(state.sidebar && state.sidebar.isConnected),
+      sidebarSurface: state.sidebar && state.sidebar.getAttribute
+        && state.sidebar.getAttribute("data-testid") === "app-shell-floating-left-panel"
+        ? "floating"
+        : state.sidebar ? "docked" : null,
+      lifecycleObserved: Boolean(state.lifecycleObserver),
       cleaned: state.cleaned,
     };
   }
@@ -2033,6 +1763,7 @@
   }
 
   const api = Object.freeze({
+    controllerId: CONTROLLER_ID,
     version: VERSION,
     mount,
     update,

@@ -14,6 +14,29 @@ import {
 } from "../src/cdp/index.mjs";
 import { invokeWindowsCdpHelper } from "../src/cdp/windows-launcher.mjs";
 
+function evaluateDefaultRendererProbe(selectors, protocol = "app:") {
+  const matches = new Set(selectors);
+  const evaluate = Function(
+    "location",
+    "document",
+    `"use strict"; return (${DEFAULT_CODEX_RENDERER_PROBE});`,
+  );
+  return evaluate(
+    { protocol },
+    { querySelector: (selector) => (matches.has(selector) ? {} : null) },
+  );
+}
+
+test("default renderer probe accepts the main composer without a sidebar and rejects a missing composer", () => {
+  assert.equal(evaluateDefaultRendererProbe([
+    "main.main-surface",
+    ".composer-surface-chrome",
+  ]), true);
+  assert.equal(evaluateDefaultRendererProbe([
+    "main.main-surface",
+  ]), false);
+});
+
 test("strict loopback URL validation rejects non-literal, credentialed, and cross-port endpoints", () => {
   assert.equal(
     assertLoopbackWebSocketUrl("ws://127.0.0.1:54321/devtools/browser/abc", 54321).hostname,
@@ -117,14 +140,37 @@ class FakeWebSocket extends EventEmitter {
     FakeWebSocket.commandLog.push({ url: this.url, command, targetId: this.targetId, isMainAtSend });
     let result = {};
     if (command.method === "Runtime.evaluate") {
-      if (command.params.expression === DEFAULT_CODEX_RENDERER_PROBE) {
-        const nextProbe = state?.probeSequence?.length ? state.probeSequence.shift() : isMainAtSend;
-        result = { result: { type: "boolean", value: nextProbe } };
-      } else if (command.params.expression.includes("__codexQuotaRendererProbeSkipped")) {
+      if (command.params.expression === state?.documentStartSource
+        && (state?.documentStartExceptionCount ?? 0) > 0) {
+        state.documentStartExceptionCount -= 1;
         result = {
           result: {
             type: "object",
-            value: { __codexQuotaRendererProbeSkipped: !isMainAtSend },
+            subtype: "error",
+            description: "Error: document-start install failed",
+          },
+          exceptionDetails: {
+            exceptionId: 1,
+            text: "Uncaught",
+            lineNumber: 0,
+            columnNumber: 0,
+          },
+        };
+      } else if (command.params.expression === DEFAULT_CODEX_RENDERER_PROBE) {
+        const nextProbe = state?.probeSequence?.length ? state.probeSequence.shift() : isMainAtSend;
+        result = { result: { type: "boolean", value: nextProbe } };
+      } else if (command.params.expression.includes("__codexQuotaRendererProbeSkipped")) {
+        const usesControllerGuard = command.params.expression.includes("__CODEX_QUOTA_PANEL__")
+          && command.params.expression.includes("codex-quota-sidebar-projection-v1");
+        const controllerIsActive = state?.controllerActive ?? isMainAtSend;
+        result = {
+          result: {
+            type: "object",
+            value: {
+              __codexQuotaRendererProbeSkipped: usesControllerGuard
+                ? !controllerIsActive
+                : !isMainAtSend,
+            },
           },
         };
       } else {
@@ -216,6 +262,7 @@ test("CdpWatcher anchors browser identity, probes renderers before bootstrap, an
   FakeWebSocket.setTargetState("main", { isMain: true });
   FakeWebSocket.setTargetState("aux", { isMain: false });
   const port = 55102;
+  const documentStartSource = "globalThis.__CODEX_QUOTA_DOCUMENT_START__ = true";
   const ready = [];
   let ownerChecks = 0;
   const watcher = new CdpWatcher({
@@ -230,6 +277,7 @@ test("CdpWatcher anchors browser identity, probes renderers before bootstrap, an
   });
 
   await watcher.start({
+    documentStartSource,
     bootstrapSource: "globalThis.__CODEX_QUOTA_BOOTSTRAP__ = true",
     cleanupExpression: "delete globalThis.__CODEX_QUOTA_BOOTSTRAP__",
     onPageReady: ({ target }) => ready.push(target.id),
@@ -243,12 +291,220 @@ test("CdpWatcher anchors browser identity, probes renderers before bootstrap, an
   const auxCommands = FakeWebSocket.commandLog.filter((entry) => entry.targetId === "aux").map((entry) => entry.command);
   const mainProbeIndex = mainCommands.findIndex((command) => command.method === "Runtime.evaluate" && command.params.expression === DEFAULT_CODEX_RENDERER_PROBE);
   const mainBootstrapIndex = mainCommands.findIndex((command) => command.method === "Runtime.evaluate" && command.params.expression.includes("__CODEX_QUOTA_BOOTSTRAP__"));
+  for (const commands of [mainCommands, auxCommands]) {
+    const registrationIndex = commands.findIndex((command) => (
+      command.method === "Page.addScriptToEvaluateOnNewDocument"
+      && command.params.source === documentStartSource
+    ));
+    const immediateInstallIndex = commands.findIndex((command) => (
+      command.method === "Runtime.evaluate"
+      && command.params.expression === documentStartSource
+    ));
+    const probeIndex = commands.findIndex((command) => (
+      command.method === "Runtime.evaluate"
+      && command.params.expression === DEFAULT_CODEX_RENDERER_PROBE
+    ));
+    assert.ok(registrationIndex >= 0);
+    assert.equal(immediateInstallIndex, registrationIndex + 1);
+    assert.equal(probeIndex, immediateInstallIndex + 1);
+  }
   assert.equal(mainProbeIndex < mainBootstrapIndex, true);
-  assert.equal(mainCommands.some((command) => command.method === "Page.addScriptToEvaluateOnNewDocument"), false);
   assert.equal(auxCommands.some((command) => command.method === "Runtime.evaluate" && command.params.expression.includes("__CODEX_QUOTA_BOOTSTRAP__")), false);
+  assert.equal(FakeWebSocket.commandLog.some(({ targetId }) => targetId === "web"), false);
 
   const updates = await watcher.evaluateAll("globalThis.__CODEX_QUOTA_UPDATE__ = 1");
   assert.deepEqual(updates.map(({ targetId, ok }) => ({ targetId, ok })), [{ targetId: "main", ok: true }]);
+  await watcher.close();
+});
+
+test("CdpWatcher does not probe or bootstrap after current document-start evaluation reports an exception", async () => {
+  FakeWebSocket.reset();
+  const port = 55112;
+  const documentStartSource = "globalThis.__CODEX_QUOTA_DOCUMENT_START_FAILURE__ = true";
+  FakeWebSocket.setTargetState("main", {
+    isMain: true,
+    documentStartSource,
+    documentStartExceptionCount: 1,
+  });
+  const pageErrors = [];
+  const watcher = new CdpWatcher({
+    port,
+    browserId: "browser-1",
+    browserWebSocketUrl: `ws://127.0.0.1:${port}/devtools/browser/browser-1`,
+    fetchImpl: fakeDiscoveryFetch(port, () => [
+      {
+        id: "main",
+        type: "page",
+        url: "app://codex/index.html",
+        webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/page/main`,
+      },
+    ]),
+    WebSocketImpl: FakeWebSocket,
+    ownerValidator: async () => ({ ok: true }),
+    pollIntervalMs: 60_000,
+    ignoredRetryMs: 60_000,
+    probeTimeoutMs: 0,
+  });
+  watcher.on("pageError", ({ error }) => pageErrors.push(error));
+
+  await watcher.start({
+    documentStartSource,
+    bootstrapSource: "globalThis.__CODEX_QUOTA_BOOTSTRAP_AFTER_DOCUMENT_START__ = true",
+  });
+  await waitFor(() => pageErrors.length === 1);
+
+  const commands = FakeWebSocket.commandLog
+    .filter((entry) => entry.targetId === "main")
+    .map((entry) => entry.command);
+  assert.equal(commands.some((command) => (
+    command.method === "Page.addScriptToEvaluateOnNewDocument"
+    && command.params.source === documentStartSource
+  )), true);
+  assert.equal(commands.some((command) => (
+    command.method === "Runtime.evaluate"
+    && command.params.expression === documentStartSource
+  )), true);
+  assert.equal(commands.some((command) => (
+    command.method === "Runtime.evaluate"
+    && command.params.expression === DEFAULT_CODEX_RENDERER_PROBE
+  )), false);
+  assert.equal(commands.some((command) => (
+    command.method === "Runtime.evaluate"
+    && command.params.expression.includes("__CODEX_QUOTA_BOOTSTRAP_AFTER_DOCUMENT_START__")
+  )), false);
+  assert.equal(watcher.size, 0);
+  assert.match(
+    String(pageErrors[0]?.message),
+    /evaluation failed|exception|document-start install failed|uncaught/i,
+  );
+  await watcher.close();
+});
+
+test("CdpWatcher keeps a controller-owned settings renderer active until its execution context clears", async () => {
+  FakeWebSocket.reset();
+  const port = 55108;
+  FakeWebSocket.setTargetState("main", { isMain: true, controllerActive: true });
+  const ready = [];
+  const watcher = new CdpWatcher({
+    port,
+    browserId: "browser-1",
+    browserWebSocketUrl: `ws://127.0.0.1:${port}/devtools/browser/browser-1`,
+    fetchImpl: fakeDiscoveryFetch(port, () => [{
+      id: "main",
+      type: "page",
+      url: "app://codex/index.html",
+      webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/page/main`,
+    }]),
+    WebSocketImpl: FakeWebSocket,
+    ownerValidator: async () => ({ ok: true }),
+    pollIntervalMs: 60_000,
+    probeTimeoutMs: 100,
+    probeIntervalMs: 1,
+    navigationSettleMs: 15,
+  });
+
+  await watcher.start({
+    bootstrapSource: "globalThis.__BOOTSTRAP_CONTROLLER_GUARD__ = true",
+    onPageReady: ({ target }) => ready.push(target.id),
+  });
+  await waitFor(() => ready.length === 1);
+  assert.equal(watcher.size, 1);
+
+  const probesBeforeSettings = runtimeEvaluations("main").filter(({ command }) => (
+    command.params.expression === DEFAULT_CODEX_RENDERER_PROBE
+  )).length;
+  FakeWebSocket.setTargetState("main", { isMain: false, controllerActive: true });
+  const settingsUpdates = await watcher.evaluateAll(
+    "globalThis.__UPDATE_WHILE_SETTINGS_ROUTE_IS_ACTIVE__ = true",
+  );
+  assert.deepEqual(
+    settingsUpdates.map(({ targetId, ok, skipped }) => ({ targetId, ok, skipped })),
+    [{ targetId: "main", ok: true, skipped: undefined }],
+  );
+  assert.equal(watcher.size, 1);
+  assert.equal(runtimeEvaluations("main").filter(({ command }) => (
+    command.params.expression === DEFAULT_CODEX_RENDERER_PROBE
+  )).length, probesBeforeSettings);
+  const settingsUpdateCommand = runtimeEvaluations("main").find(({ command }) => (
+    command.params.expression.includes("__UPDATE_WHILE_SETTINGS_ROUTE_IS_ACTIVE__")
+  ))?.command;
+  assert.match(settingsUpdateCommand.params.expression, /__CODEX_QUOTA_PANEL__/);
+  assert.match(settingsUpdateCommand.params.expression, /codex-quota-sidebar-projection-v1/);
+
+  FakeWebSocket.setTargetState("main", { isMain: true, controllerActive: false });
+  FakeWebSocket.pageSocket("main").emitProtocol("Runtime.executionContextsCleared");
+  await waitFor(() => watcher.size === 0);
+  await waitFor(() => runtimeEvaluations("main").filter(({ command }) => (
+    command.params.expression === DEFAULT_CODEX_RENDERER_PROBE
+  )).length > probesBeforeSettings);
+  await waitFor(() => ready.length === 2);
+  assert.equal(watcher.size, 1);
+  await watcher.close();
+});
+
+test("CdpWatcher ignores same-endpoint settings URL changes while its controller survives", async () => {
+  FakeWebSocket.reset();
+  const port = 55109;
+  let target = {
+    id: "main",
+    type: "page",
+    url: "app://codex/index.html",
+    webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/page/main`,
+  };
+  FakeWebSocket.setTargetState("main", { isMain: true, controllerActive: true });
+  const ready = [];
+  const removed = [];
+  const watcher = new CdpWatcher({
+    port,
+    browserId: "browser-1",
+    browserWebSocketUrl: `ws://127.0.0.1:${port}/devtools/browser/browser-1`,
+    fetchImpl: fakeDiscoveryFetch(port, () => [target]),
+    WebSocketImpl: FakeWebSocket,
+    ownerValidator: async () => ({ ok: true }),
+    pollIntervalMs: 3,
+    identityCheckEvery: 100,
+    ownerCheckEvery: 100,
+    probeTimeoutMs: 100,
+    probeIntervalMs: 1,
+    navigationSettleMs: 15,
+  });
+
+  await watcher.start({
+    bootstrapSource: "globalThis.__BOOTSTRAP_DISCOVERY_ROUTE__ = true",
+    onPageReady: ({ target: readyTarget }) => ready.push(readyTarget.url),
+    onPageRemoved: ({ reason }) => removed.push(reason),
+  });
+  await waitFor(() => ready.length === 1);
+  const probesBeforeSettings = runtimeEvaluations("main").filter(({ command }) => (
+    command.params.expression === DEFAULT_CODEX_RENDERER_PROBE
+  )).length;
+  const controllerChecksBeforeSettings = runtimeEvaluations("main").filter(({ command }) => (
+    command.params.expression.includes("__CODEX_QUOTA_PANEL__")
+    && command.params.expression.includes("codex-quota-sidebar-projection-v1")
+  )).length;
+
+  FakeWebSocket.setTargetState("main", { isMain: false, controllerActive: true });
+  target = { ...target, url: "app://codex/settings/general" };
+  await waitFor(() => runtimeEvaluations("main").filter(({ command }) => (
+    command.params.expression.includes("__CODEX_QUOTA_PANEL__")
+    && command.params.expression.includes("codex-quota-sidebar-projection-v1")
+  )).length > controllerChecksBeforeSettings);
+  assert.equal(watcher.size, 1);
+  assert.deepEqual(ready, ["app://codex/index.html"]);
+  assert.deepEqual(removed, []);
+  assert.equal(runtimeEvaluations("main").filter(({ command }) => (
+    command.params.expression === DEFAULT_CODEX_RENDERER_PROBE
+  )).length, probesBeforeSettings);
+
+  FakeWebSocket.setTargetState("main", { isMain: true, controllerActive: false });
+  target = { ...target, url: "app://codex/index.html?new-document=1" };
+  await waitFor(() => removed.includes("target-url-changed"));
+  await waitFor(() => runtimeEvaluations("main").filter(({ command }) => (
+    command.params.expression === DEFAULT_CODEX_RENDERER_PROBE
+  )).length > probesBeforeSettings);
+  await waitFor(() => ready.length === 2);
+  assert.equal(watcher.size, 1);
+  assert.equal(ready[1], "app://codex/index.html?new-document=1");
   await watcher.close();
 });
 
@@ -261,7 +517,7 @@ test("CdpWatcher re-probes a target immediately when its URL changes main to aux
     url: "app://codex/index.html",
     webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/page/surface`,
   };
-  FakeWebSocket.setTargetState("surface", { isMain: true });
+  FakeWebSocket.setTargetState("surface", { isMain: true, controllerActive: true });
   const ready = [];
   const watcher = new CdpWatcher({
     port,
@@ -285,7 +541,7 @@ test("CdpWatcher re-probes a target immediately when its URL changes main to aux
   await waitFor(() => ready.length === 1);
   assert.equal(watcher.size, 1);
 
-  FakeWebSocket.setTargetState("surface", { isMain: false });
+  FakeWebSocket.setTargetState("surface", { isMain: false, controllerActive: false });
   target = { ...target, url: "app://codex/aux.html" };
   await waitFor(() => watcher.size === 0);
   await waitFor(() => runtimeEvaluations("surface").filter(({ command }) => (
@@ -294,8 +550,14 @@ test("CdpWatcher re-probes a target immediately when its URL changes main to aux
   assert.equal(watcher.size, 0);
 
   // A changed URL fingerprint invalidates the pending backoff and probes now.
-  FakeWebSocket.setTargetState("surface", { isMain: true });
+  const probesBeforeReturn = runtimeEvaluations("surface").filter(({ command }) => (
+    command.params.expression === DEFAULT_CODEX_RENDERER_PROBE
+  )).length;
   target = { ...target, url: "app://codex/index.html?returned=1" };
+  await waitFor(() => runtimeEvaluations("surface").filter(({ command }) => (
+    command.params.expression === DEFAULT_CODEX_RENDERER_PROBE
+  )).length > probesBeforeReturn);
+  FakeWebSocket.setTargetState("surface", { isMain: true, controllerActive: true });
   await waitFor(() => ready.at(-1) === "app://codex/index.html?returned=1");
   assert.equal(watcher.size, 1);
   assert.equal(ready.at(-1), "app://codex/index.html?returned=1");

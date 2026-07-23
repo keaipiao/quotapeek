@@ -8,7 +8,6 @@ export const DEFAULT_CODEX_RENDERER_PROBE = String.raw`(() => {
   try {
     return location.protocol === "app:"
       && Boolean(document.querySelector("main.main-surface"))
-      && Boolean(document.querySelector("aside.app-shell-left-panel"))
       && Boolean(document.querySelector(".composer-surface-chrome") || document.querySelector("[role=main]"));
   } catch {
     return false;
@@ -16,6 +15,8 @@ export const DEFAULT_CODEX_RENDERER_PROBE = String.raw`(() => {
 })()`;
 
 const GUARDED_SKIP_MARKER = "__codexQuotaRendererProbeSkipped";
+const PANEL_GLOBAL_KEY = "__CODEX_QUOTA_PANEL__";
+const PANEL_CONTROLLER_ID = "codex-quota-sidebar-projection-v1";
 
 function abortableDelay(milliseconds, signal) {
   return new Promise((resolve) => {
@@ -39,10 +40,29 @@ function targetFingerprint(target) {
  * the target has already become an auxiliary renderer, the payload is not
  * executed there even if its navigation event is still in flight.
  */
-function guardedRendererExpression(probeExpression, expression) {
+function guardedBootstrapExpression(probeExpression, expression) {
   return `(() => {\n` +
     `  const __codexQuotaProbe = (${probeExpression});\n` +
     `  if (__codexQuotaProbe !== true && !(__codexQuotaProbe && __codexQuotaProbe.ok === true)) {\n` +
+    `    return { ${GUARDED_SKIP_MARKER}: true };\n` +
+    `  }\n` +
+    `  (() => {\n${expression}\n  })();\n` +
+    `  return { ${GUARDED_SKIP_MARKER}: false };\n` +
+    `})()`;
+}
+
+/*
+ * Once a target has passed the strict main-renderer probe, route and
+ * responsive-layout changes must not deactivate it. The injected controller
+ * identity survives Settings and a zero-sidebar narrow layout, while a real
+ * navigation clears it before any queued update can run.
+ */
+function guardedActiveRendererExpression(expression) {
+  return `(() => {\n` +
+    `  let __codexQuotaApi;\n` +
+    `  try { __codexQuotaApi = globalThis[${JSON.stringify(PANEL_GLOBAL_KEY)}]; } catch {}\n` +
+    `  if (location.protocol !== "app:" || !__codexQuotaApi || ` +
+      `__codexQuotaApi.controllerId !== ${JSON.stringify(PANEL_CONTROLLER_ID)}) {\n` +
     `    return { ${GUARDED_SKIP_MARKER}: true };\n` +
     `  }\n` +
     `  (() => {\n${expression}\n  })();\n` +
@@ -82,6 +102,7 @@ export class CdpWatcher extends EventEmitter {
   #closing = false;
   #terminalError;
   #bootstrapSource = "";
+  #documentStartSource = "";
   #cleanupExpression;
   #onPageReady;
   #onPageRemoved;
@@ -164,6 +185,7 @@ export class CdpWatcher extends EventEmitter {
 
   async start({
     bootstrapSource,
+    documentStartSource,
     cleanupExpression,
     onPageReady,
     onPageRemoved,
@@ -172,10 +194,15 @@ export class CdpWatcher extends EventEmitter {
     if (typeof bootstrapSource !== "string" || !bootstrapSource.trim()) {
       throw new TypeError("bootstrapSource must be a non-empty JavaScript string");
     }
+    if (documentStartSource !== undefined
+      && (typeof documentStartSource !== "string" || !documentStartSource.trim())) {
+      throw new TypeError("documentStartSource must be a non-empty JavaScript string");
+    }
     if (cleanupExpression !== undefined && typeof cleanupExpression !== "string") {
       throw new TypeError("cleanupExpression must be a JavaScript string");
     }
     this.#bootstrapSource = bootstrapSource;
+    this.#documentStartSource = documentStartSource ?? "";
     this.#cleanupExpression = cleanupExpression;
     this.#onPageReady = onPageReady;
     this.#onPageRemoved = onPageRemoved;
@@ -310,7 +337,16 @@ export class CdpWatcher extends EventEmitter {
           } else {
             page.target = target;
             page.fingerprint = fingerprint;
-            this.#scheduleRevalidation(page, "target-url-changed", this.#navigationSettleMs);
+            // Settings and other in-app routes can update the target URL
+            // without replacing the execution context. Keep the verified
+            // controller active in that case; a real navigation clears its
+            // identity and falls back to the strict renderer probe.
+            const controllerPresent = page.active
+              ? await this.#activeControllerPresent(page)
+              : false;
+            if (!controllerPresent) {
+              this.#scheduleRevalidation(page, "target-url-changed", this.#navigationSettleMs);
+            }
           }
         }
         continue;
@@ -329,6 +365,21 @@ export class CdpWatcher extends EventEmitter {
       && page.generation === generation
       && this.#trackedTargets.get(page.target.id) === page
       && !this.#abort.signal.aborted;
+  }
+
+  async #activeControllerPresent(page) {
+    if (!page.active || this.#pages.get(page.target.id) !== page || !page.session.isOpen) return false;
+    try {
+      const evaluation = await page.session.send("Runtime.evaluate", {
+        expression: guardedActiveRendererExpression(""),
+        awaitPromise: false,
+        returnByValue: true,
+        userGesture: false,
+      });
+      return !wasGuardedExpressionSkipped(evaluation);
+    } catch {
+      return false;
+    }
   }
 
   async #probeCodexRenderer(page, generation) {
@@ -386,7 +437,7 @@ export class CdpWatcher extends EventEmitter {
       page.probeRetryCount = 0;
 
       const evaluated = await page.session.send("Runtime.evaluate", {
-        expression: guardedRendererExpression(this.#targetProbeExpression, this.#bootstrapSource),
+        expression: guardedBootstrapExpression(this.#targetProbeExpression, this.#bootstrapSource),
         awaitPromise: true,
         returnByValue: true,
         userGesture: false,
@@ -404,7 +455,7 @@ export class CdpWatcher extends EventEmitter {
           throw new Error("Renderer is no longer active");
         }
         const replay = await page.session.send("Runtime.evaluate", {
-          expression: guardedRendererExpression(this.#targetProbeExpression, expression),
+          expression: guardedActiveRendererExpression(expression),
           awaitPromise: options.awaitPromise ?? true,
           returnByValue: options.returnByValue ?? true,
           userGesture: false,
@@ -479,6 +530,27 @@ export class CdpWatcher extends EventEmitter {
         session.send("Runtime.enable"),
         session.send("Page.enable"),
       ]);
+      if (this.#documentStartSource) {
+        await session.send("Page.addScriptToEvaluateOnNewDocument", {
+          source: this.#documentStartSource,
+        });
+        let documentStartEvaluation;
+        try {
+          documentStartEvaluation = await session.send("Runtime.evaluate", {
+            expression: this.#documentStartSource,
+            awaitPromise: false,
+            returnByValue: true,
+            userGesture: false,
+          });
+        } catch (error) {
+          // A context can disappear between registration and evaluation.
+          // Registration already protects the replacement document.
+          if (!session.isOpen) throw error;
+        }
+        if (documentStartEvaluation?.exceptionDetails) {
+          throw new Error("Native card suppressor evaluation failed");
+        }
+      }
       this.#scheduleRevalidation(page, "target-added");
       return true;
     } catch (error) {
@@ -516,7 +588,7 @@ export class CdpWatcher extends EventEmitter {
     if (wasActive && page.session.isOpen && this.#cleanupExpression) {
       try {
         await page.session.send("Runtime.evaluate", {
-          expression: guardedRendererExpression(this.#targetProbeExpression, this.#cleanupExpression),
+          expression: guardedActiveRendererExpression(this.#cleanupExpression),
           awaitPromise: true,
           returnByValue: true,
         }, { timeoutMs: 1_000 });
@@ -537,7 +609,7 @@ export class CdpWatcher extends EventEmitter {
   async evaluateAll(expression, { awaitPromise = true, returnByValue = true } = {}) {
     if (typeof expression !== "string" || !expression.trim()) throw new TypeError("expression is required");
     const results = [];
-    const guardedExpression = guardedRendererExpression(this.#targetProbeExpression, expression);
+    const guardedExpression = guardedActiveRendererExpression(expression);
     for (const page of [...this.#pages.values()]) {
       if (!page.active || this.#pages.get(page.target.id) !== page) continue;
       try {

@@ -18,9 +18,13 @@ export class RendererBridge {
   }
 
   async start() {
-    const bootstrapSource = await readFile(join(this.#engineRoot, "src", "renderer", "panel-inject.js"), "utf8");
+    const [bootstrapSource, documentStartSource] = await Promise.all([
+      readFile(join(this.#engineRoot, "src", "renderer", "panel-inject.js"), "utf8"),
+      readFile(join(this.#engineRoot, "src", "renderer", "native-card-suppress.js"), "utf8"),
+    ]);
     return this.#watcher.start({
       bootstrapSource,
+      documentStartSource,
       cleanupExpression: buildCallExpression("cleanup", "watcher-closed"),
       onPageReady: ({ evaluate }) => this.#replayOnPage(evaluate),
     });

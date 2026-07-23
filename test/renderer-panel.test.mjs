@@ -4,7 +4,10 @@ import test from "node:test";
 import vm from "node:vm";
 
 const injectorSource = await readFile(new URL("../src/renderer/panel-inject.js", import.meta.url), "utf8");
-const earlySuppressorSource = await readFile(new URL("../src/renderer/early-suppress.js", import.meta.url), "utf8");
+const nativeCardSuppressorSource = await readFile(
+  new URL("../src/renderer/native-card-suppress.js", import.meta.url),
+  "utf8",
+);
 
 class FakeStyle {
   constructor() {
@@ -209,59 +212,6 @@ function rect(top, bottom, width = 260, left = 0) {
   return { top, bottom, left, right: left + width, width, height: bottom - top };
 }
 
-function createNativeLowUsageAlert({
-  remainingPercent = 10,
-  top = 540,
-  bottom = 650,
-  titleText = `${remainingPercent}% usage remaining`,
-  dismissLabel = "Dismiss usage alert",
-  progressLabel = "Usage consumed",
-  resetText = "Resets later",
-  actionLabels = [],
-} = {}) {
-  const wrapper = new FakeElement("div", rect(top, bottom));
-  wrapper.className = "w-full mb-2";
-  const status = new FakeElement("div", rect(top, bottom));
-  status.className = "flex w-full flex-col rounded-2xl border";
-  status.setAttribute("role", "status");
-  status.setAttribute("aria-live", "polite");
-  const header = new FakeElement("div", rect(top + 8, top + 54, 236, 12));
-  const titleRow = new FakeElement("div", rect(top + 8, top + 30, 236, 12));
-  const title = new FakeElement("span", rect(top + 8, top + 28, 196, 12));
-  title.textContent = titleText;
-  const dismiss = new FakeElement("button", rect(top + 8, top + 28, 20, 228));
-  dismiss.className = "no-drag";
-  dismiss.setAttribute("type", "button");
-  dismiss.setAttribute("aria-label", dismissLabel);
-  titleRow.appendChild(title);
-  titleRow.appendChild(dismiss);
-  header.appendChild(titleRow);
-  if (resetText !== null) {
-    const reset = new FakeElement("div", rect(top + 32, top + 50, 236, 12));
-    reset.textContent = resetText;
-    header.appendChild(reset);
-  }
-  const progress = new FakeElement("progress", rect(bottom - 20, bottom - 14, 236, 12));
-  progress.setAttribute("aria-label", progressLabel);
-  progress.setAttribute("max", "100");
-  progress.setAttribute("value", String(100 - remainingPercent));
-  status.appendChild(header);
-  status.appendChild(progress);
-  let actions = null;
-  if (actionLabels.length) {
-    actions = new FakeElement("div", rect(bottom - 42, bottom - 22, 236, 12));
-    for (const label of actionLabels) {
-      const action = new FakeElement("button", rect(bottom - 42, bottom - 22, 100, 12));
-      action.setAttribute("type", "button");
-      action.textContent = label;
-      actions.appendChild(action);
-    }
-    status.appendChild(actions);
-  }
-  wrapper.appendChild(status);
-  return { wrapper, status, header, titleRow, title, dismiss, progress, actions };
-}
-
 function createEnvironment(options = {}) {
   let clock = options.clock ?? 1_800_000_000_000;
   let shellVisible = options.shellReady !== false;
@@ -276,32 +226,60 @@ function createEnvironment(options = {}) {
   const composer = new FakeElement("div", rect(700, 780, 700, 300));
   composer.className = "composer-surface-chrome";
   main.appendChild(composer);
-  const sidebar = new FakeElement("aside", rect(0, 800));
-  sidebar.className = "app-shell-left-panel";
-  sidebar.clientWidth = 260;
-  sidebar.scrollWidth = 260;
-  body.appendChild(sidebar);
+  const surfaceFixtures = [];
 
-  const layout = new FakeElement("div", rect(0, 800));
-  layout._computed = { display: "flex", flexDirection: "column", position: "static", overflowY: "visible" };
-  sidebar.appendChild(layout);
-  const scroller = new FakeElement("nav", rect(60, 700));
-  scroller.setAttribute("data-app-action-sidebar-scroll", "");
-  scroller._computed = { display: "block", flexDirection: "column", position: "static", overflowY: "auto" };
-  scroller.clientHeight = 640;
-  scroller.scrollHeight = 1_400;
-  layout.appendChild(scroller);
-  const footerTop = options.footerTop ?? 760;
-  const footer = new FakeElement("footer", rect(footerTop, 800));
-  if (options.stickyFooter) footer._computed.position = "sticky";
-  footer.setAttribute("role", "contentinfo");
-  footer.setAttribute("data-sidebar-footer", "");
-  layout.appendChild(footer);
-  const accountButton = new FakeElement("button", rect(768, 796, 236, 12));
-  if (options.menuTrigger !== false) accountButton.setAttribute("aria-haspopup", "menu");
-  if (options.identityMarker) accountButton.setAttribute("data-testid", "sidebar-account-profile");
-  accountButton.setAttribute("aria-expanded", "false");
-  footer.appendChild(accountButton);
+  function createSidebarSurface(kind = "docked", overrides = {}) {
+    const sidebarRect = overrides.sidebarRect ?? options.sidebarRect ?? rect(0, 800);
+    const sidebar = new FakeElement("aside", sidebarRect);
+    if (kind === "floating") {
+      sidebar.setAttribute("data-testid", "app-shell-floating-left-panel");
+    } else {
+      sidebar.className = "app-shell-left-panel";
+    }
+    sidebar.clientWidth = sidebarRect.width;
+    sidebar.scrollWidth = sidebarRect.width;
+
+    const layout = new FakeElement("div", rect(0, 800));
+    layout._computed = { display: "flex", flexDirection: "column", position: "static", overflowY: "visible" };
+    sidebar.appendChild(layout);
+    const scroller = new FakeElement("nav", rect(60, 700));
+    scroller.setAttribute("data-app-action-sidebar-scroll", "");
+    scroller._computed = { display: "block", flexDirection: "column", position: "static", overflowY: "auto" };
+    scroller.clientHeight = 640;
+    scroller.scrollHeight = 1_400;
+    layout.appendChild(scroller);
+    const footerTop = overrides.footerTop ?? options.footerTop ?? 760;
+    const footer = new FakeElement("footer", rect(footerTop, 800));
+    if (overrides.stickyFooter ?? options.stickyFooter) footer._computed.position = "sticky";
+    footer.setAttribute("role", "contentinfo");
+    footer.setAttribute("data-sidebar-footer", "");
+    layout.appendChild(footer);
+    const accountButton = new FakeElement("button", rect(768, 796, 236, 12));
+    if ((overrides.menuTrigger ?? options.menuTrigger) !== false) {
+      accountButton.setAttribute("aria-haspopup", "menu");
+    }
+    if (overrides.identityMarker ?? options.identityMarker) {
+      accountButton.setAttribute("data-testid", "sidebar-account-profile");
+    }
+    accountButton.setAttribute("aria-expanded", "false");
+    footer.appendChild(accountButton);
+    return { kind, sidebar, layout, scroller, footer, accountButton };
+  }
+
+  function attachInitialSurface(kind) {
+    if (kind === "none") return null;
+    const fixture = createSidebarSurface(kind);
+    surfaceFixtures.push(fixture);
+    body.appendChild(fixture.sidebar);
+    return fixture;
+  }
+
+  const initialSurface = attachInitialSurface(options.initialSurface ?? "docked");
+  const sidebar = initialSurface?.sidebar ?? null;
+  const layout = initialSurface?.layout ?? null;
+  const scroller = initialSurface?.scroller ?? null;
+  const footer = initialSurface?.footer ?? null;
+  const accountButton = initialSurface?.accountButton ?? null;
 
   const intervals = [];
   const timeouts = [];
@@ -355,7 +333,12 @@ function createEnvironment(options = {}) {
       if (selector === "main.main-surface") return main.isConnected ? main : null;
       if (selector === ".composer-surface-chrome") return composer.isConnected ? composer : null;
       if (selector === "[role=\"main\"]") return null;
-      if (selector === "aside.app-shell-left-panel") return sidebar.isConnected ? sidebar : null;
+      if (selector === "aside.app-shell-left-panel") {
+        return surfaceFixtures.find((fixture) => fixture.kind === "docked" && fixture.sidebar.isConnected)?.sidebar ?? null;
+      }
+      if (selector === "aside[data-testid=\"app-shell-floating-left-panel\"]") {
+        return surfaceFixtures.find((fixture) => fixture.kind === "floating" && fixture.sidebar.isConnected)?.sidebar ?? null;
+      }
       return null;
     },
     addEventListener(name, callback) { documentListeners.set(name, callback); },
@@ -434,6 +417,24 @@ function createEnvironment(options = {}) {
 
   const context = vm.createContext({ window, Date: ClockDate, Intl, console });
   const evaluate = () => new vm.Script(injectorSource).runInContext(context);
+  function notifyRootMutation(records) {
+    const observer = observers.find((entry) => !entry.disconnected && entry.target === root);
+    if (observer) observer.callback(records);
+    return observer;
+  }
+  function attachSurface(kind = "docked", overrides = {}) {
+    const fixture = createSidebarSurface(kind, overrides);
+    surfaceFixtures.push(fixture);
+    body.appendChild(fixture.sidebar);
+    notifyRootMutation([{ addedNodes: [fixture.sidebar], removedNodes: [] }]);
+    return fixture;
+  }
+  function detachSurface(fixture = initialSurface) {
+    if (!fixture?.sidebar?.parentElement) return false;
+    fixture.sidebar.parentElement.removeChild(fixture.sidebar);
+    notifyRootMutation([{ addedNodes: [], removedNodes: [fixture.sidebar] }]);
+    return true;
+  }
   return {
     window,
     root,
@@ -446,7 +447,11 @@ function createEnvironment(options = {}) {
     timeouts,
     observers,
     resizeObservers,
+    surfaceFixtures,
     evaluate,
+    attachSurface,
+    detachSurface,
+    notifyRootMutation,
     advance(milliseconds) { clock += milliseconds; },
     revealShell() { shellVisible = true; },
     dispatchDocument(name) {
@@ -488,7 +493,7 @@ function snapshot(fetchedAtMs) {
   };
 }
 
-test("early native suppression installs a language-independent structural style and self-cleans", () => {
+test("native-card suppression permanently covers docked, floating, and fixed Codex surfaces", () => {
   const root = {
     children: [],
     appendChild(element) {
@@ -501,7 +506,6 @@ test("early native suppression installs a language-independent structural style 
       element.parentNode = null;
     },
   };
-  const timers = [];
   const document = {
     head: root,
     documentElement: root,
@@ -511,70 +515,36 @@ test("early native suppression installs a language-independent structural style 
   const window = {
     document,
     location: { protocol: "app:" },
-    setTimeout(callback, milliseconds) {
-      const handle = { callback, milliseconds, active: true };
-      timers.push(handle);
-      return handle;
-    },
-    clearTimeout(handle) { if (handle) handle.active = false; },
   };
-  const result = new vm.Script(earlySuppressorSource).runInContext(vm.createContext({ window }));
+  const context = vm.createContext({ window });
+  const result = new vm.Script(nativeCardSuppressorSource).runInContext(context);
   const style = root.children[0];
 
   assert.equal(result.active, true);
   assert.equal(result.reason, null);
-  assert.equal(style.id, "codex-quota-early-native-suppressor");
+  assert.equal(style.id, "codex-quota-native-card-suppressor");
+  assert.match(style.textContent, /aside\.app-shell-left-panel/);
+  assert.match(style.textContent, /aside\[data-testid="app-shell-floating-left-panel"\]/);
+  assert.match(style.textContent, /div\.pointer-events-none\.fixed\[class\*="spacing-token-sidebar"\]/);
   assert.match(style.textContent, /role="status"/);
   assert.match(style.textContent, /> progress\[max="100"\]\[value\]/);
   assert.match(style.textContent, /button\[type="button"\]\.no-drag/);
-  assert.match(style.textContent, /:not\(nav \*\)/);
-  assert.match(style.textContent, /:not\(\[data-app-action-sidebar-scroll\] \*\)/);
-  assert.doesNotMatch(style.textContent, /usage|quota|remaining|棰濆害|%/i);
-  assert.ok(timers[0].milliseconds > 29_000 && timers[0].milliseconds <= 30_000);
+  assert.doesNotMatch(style.textContent, /usage|quota|remaining|额度|%/i);
+  assert.doesNotMatch(
+    nativeCardSuppressorSource,
+    /setTimeout|clearTimeout|setInterval|clearInterval|SELF_CLEANUP|deadline|expiresAt|panelBlockReason/,
+  );
+  const second = new vm.Script(nativeCardSuppressorSource).runInContext(context);
+  assert.equal(second.active, true);
+  assert.equal(root.children.length, 1);
+  assert.equal(root.children[0], style);
 
-  timers[0].callback();
+  window.__CODEX_QUOTA_NATIVE_CARD_SUPPRESSOR__.cleanup("test");
   assert.equal(root.children.length, 0);
-  assert.equal(window.__CODEX_QUOTA_EARLY_NATIVE_SUPPRESSOR__, undefined);
+  assert.equal(window.__CODEX_QUOTA_NATIVE_CARD_SUPPRESSOR__, undefined);
 });
 
-test("an early style installed near registration expiry uses only the absolute time remaining", () => {
-  let clock = 29_900;
-  class ClockDate extends Date {
-    static now() { return clock; }
-  }
-  const root = {
-    children: [],
-    appendChild(element) { this.children.push(element); element.parentNode = this; },
-    removeChild(element) { this.children.splice(this.children.indexOf(element), 1); element.parentNode = null; },
-  };
-  const timers = [];
-  const document = {
-    head: root,
-    documentElement: root,
-    createElement: () => ({ id: "", textContent: "", parentNode: null }),
-    getElementById: (id) => root.children.find((element) => element.id === id) || null,
-  };
-  const window = {
-    document,
-    location: { protocol: "app:" },
-    setTimeout(callback, milliseconds) {
-      const handle = { callback, milliseconds };
-      timers.push(handle);
-      return handle;
-    },
-    clearTimeout() {},
-  };
-  const wrappedSource = `((__codexQuotaEarlyDeadlineMs) => { return ${earlySuppressorSource}\n})(30000)`;
-  const result = new vm.Script(wrappedSource).runInContext(vm.createContext({ window, Date: ClockDate }));
-
-  assert.equal(result.active, true);
-  assert.equal(timers[0].milliseconds, 100);
-  clock = 30_000;
-  timers[0].callback();
-  assert.equal(root.children.length, 0);
-});
-
-test("early suppression installs as soon as a document root appears before DOMContentLoaded", () => {
+test("native-card suppression installs as soon as a document root appears before DOMContentLoaded", () => {
   const root = {
     children: [],
     appendChild(element) {
@@ -615,10 +585,8 @@ test("early suppression installs as soon as a document root appears before DOMCo
     document,
     location: { protocol: "app:" },
     MutationObserver: FakeMutationObserver,
-    setTimeout: () => ({ active: true }),
-    clearTimeout() {},
   };
-  const initial = new vm.Script(earlySuppressorSource).runInContext(vm.createContext({ window }));
+  const initial = new vm.Script(nativeCardSuppressorSource).runInContext(vm.createContext({ window }));
   assert.equal(initial.active, false);
   assert.equal(initial.pending, true);
   assert.equal(typeof readyHandler, "function");
@@ -627,74 +595,21 @@ test("early suppression installs as soon as a document root appears before DOMCo
 
   document.documentElement = root;
   observers[0].callback([{ type: "childList" }]);
-  assert.equal(window.__CODEX_QUOTA_EARLY_NATIVE_SUPPRESSOR__.status().active, true);
-  assert.equal(root.children[0].id, "codex-quota-early-native-suppressor");
+  assert.equal(window.__CODEX_QUOTA_NATIVE_CARD_SUPPRESSOR__.status().active, true);
+  assert.equal(root.children[0].id, "codex-quota-native-card-suppressor");
   assert.equal(observers[0].disconnected, true);
   assert.equal(readyHandler, null);
-  window.__CODEX_QUOTA_EARLY_NATIVE_SUPPRESSOR__.cleanup("test");
+  window.__CODEX_QUOTA_NATIVE_CARD_SUPPRESSOR__.cleanup("test");
   assert.equal(root.children.length, 0);
 });
 
-test("a late early-suppression evaluation cannot override terminal full-panel states", () => {
-  const cases = [
-    [{ mounted: true, cleaned: false, freshness: "loading", reason: null }, "panel-already-mounted"],
-    [{ mounted: false, cleaned: true, freshness: "loading", reason: "manual-cleanup" }, "panel-cleaned"],
-    [{ mounted: false, cleaned: false, freshness: "unavailable", reason: "anchor-not-found" }, "panel-unavailable"],
-    [{ mounted: false, cleaned: false, freshness: "loading", reason: "conversation-scroll-dock-not-found" }, "panel-mount-failed"],
-  ];
-
-  for (const [status, expectedReason] of cases) {
-    const root = {
-      children: [],
-      appendChild(element) { this.children.push(element); element.parentNode = this; },
-    };
-    const document = {
-      head: root,
-      documentElement: root,
-      createElement: () => ({ id: "", textContent: "", parentNode: null }),
-      getElementById: () => null,
-    };
-    const window = {
-      document,
-      location: { protocol: "app:" },
-      __CODEX_QUOTA_PANEL__: { status: () => status },
-    };
-
-    const result = new vm.Script(earlySuppressorSource).runInContext(vm.createContext({ window }));
-    assert.equal(result.active, false);
-    assert.equal(result.reason, expectedReason);
-    assert.equal(root.children.length, 0);
-    assert.equal(window.__CODEX_QUOTA_EARLY_NATIVE_SUPPRESSOR__, undefined);
-  }
-});
-
-test("a late early-suppression evaluation still covers a transient anchor startup state", () => {
-  const root = {
-    children: [],
-    appendChild(element) { this.children.push(element); element.parentNode = this; },
-    removeChild(element) { this.children.splice(this.children.indexOf(element), 1); element.parentNode = null; },
-  };
-  const document = {
-    head: root,
-    documentElement: root,
-    createElement: () => ({ id: "", textContent: "", parentNode: null }),
-    getElementById: (id) => root.children.find((element) => element.id === id) || null,
-  };
-  const window = {
-    document,
-    location: { protocol: "app:" },
-    __CODEX_QUOTA_PANEL__: {
-      status: () => ({ mounted: false, cleaned: false, freshness: "loading", reason: "anchor-not-found" }),
-    },
-    setTimeout: () => ({ active: true }),
-    clearTimeout() {},
-  };
-
-  const result = new vm.Script(earlySuppressorSource).runInContext(vm.createContext({ window }));
-  assert.equal(result.active, true);
-  assert.equal(root.children.length, 1);
-  window.__CODEX_QUOTA_EARLY_NATIVE_SUPPRESSOR__.cleanup("test");
-  assert.equal(root.children.length, 0);
+test("panel controller contains no translated or structural native-card matcher", () => {
+  assert.doesNotMatch(
+    injectorSource,
+    /nativeLowUsageAlertScore|nativeQuotaScore|findNativeQuota|nativeQuotaHidden|subtreeText|NATIVE_HIDDEN|EARLY_NATIVE/,
+  );
+  assert.doesNotMatch(injectorSource, /usage\s+remaining|dismiss\s+usage\s+alert/i);
+  assert.doesNotMatch(injectorSource, /role="status"[\s\S]*rounded-2xl[\s\S]*progress/);
 });
 
 test("injector evaluates to a structured result and mounts in normal flow before the account footer", () => {
@@ -1013,257 +928,126 @@ test("limit labels describe the period instead of exposing primary and secondary
   assert.equal(hooks.formatLimitLabel(null), "使用限额");
 });
 
-test("a unique native footer quota is hidden only while the injected general quota is available", () => {
-  const environment = createEnvironment();
-  const unrelated = new FakeElement("div", rect(650, 675));
-  unrelated.textContent = "剩余额度说明";
-  environment.layout.insertBefore(unrelated, environment.footer);
-  const nativeQuota = new FakeElement("div", rect(675, 700));
-  nativeQuota.textContent = "Usage remaining 72%";
-  nativeQuota.style.display = "grid";
-  environment.layout.insertBefore(nativeQuota, environment.footer);
-
-  environment.evaluate();
-  const api = environment.window.__CODEX_QUOTA_PANEL__;
-  assert.equal(nativeQuota.style.display, "grid");
-  assert.equal(nativeQuota.hasAttribute("data-codex-quota-native-hidden"), false);
-
-  const fresh = api.update(snapshot(1_800_000_000_000));
-  assert.equal(fresh.nativeQuotaHiddenCount, 1);
-  assert.equal(nativeQuota.style.display, "none");
-  assert.equal(nativeQuota.style.getPropertyPriority("display"), "important");
-  assert.equal(nativeQuota.getAttribute("data-codex-quota-native-hidden"), "0.4.4");
-  assert.notEqual(unrelated.style.display, "none");
-  assert.notEqual(environment.accountButton.style.display, "none");
-
-  nativeQuota.style.removeProperty("display");
-  nativeQuota.removeAttribute("data-codex-quota-native-hidden");
-  const repaired = api.heartbeat();
-  assert.equal(repaired.nativeQuotaHiddenCount, 1);
-  assert.equal(nativeQuota.style.display, "none");
-  assert.equal(nativeQuota.style.getPropertyPriority("display"), "important");
-  assert.equal(nativeQuota.getAttribute("data-codex-quota-native-hidden"), "0.4.4");
-
-  const unavailable = api.unavailable({ reason: "temporarily unavailable" });
-  assert.equal(unavailable.nativeQuotaHiddenCount, 0);
-  assert.equal(nativeQuota.style.display, "grid");
-  assert.equal(nativeQuota.hasAttribute("data-codex-quota-native-hidden"), false);
-
-  api.update(snapshot(1_800_000_000_000));
-  assert.equal(nativeQuota.style.display, "none");
-  api.cleanup();
-  assert.equal(nativeQuota.style.display, "grid");
-  assert.equal(nativeQuota.hasAttribute("data-codex-quota-native-hidden"), false);
-  assert.equal(environment.scroller.style.marginBottom || "", "");
-  assert.equal(environment.scroller.style.paddingBottom || "", "");
-  assert.equal(environment.scroller.style.getPropertyValue("--sidebar-scroll-footer-edge"), "");
-});
-
-test("native low-usage cards are matched structurally in every language and hidden while startup is loading", () => {
-  const localizedCards = [
-    { language: "mn-MN", titleText: "Таны ашиглах боломж багаслаа", dismissLabel: "Хаах", progressLabel: "Ашигласан хэмжээ" },
-    { language: "fil-PH", titleText: "Kaunti na lang ang magagamit", dismissLabel: "Isara", progressLabel: "Nagamit na" },
-    { language: "ar", titleText: "اقترب حد الاستخدام", dismissLabel: "إغلاق", progressLabel: "المستخدم" },
-    { language: "zz-ZZ", titleText: "ᚠᛇᚻ 無意味 🜁", dismissLabel: "◇", progressLabel: "◌" },
-  ];
-
-  for (const localized of localizedCards) {
-    const environment = createEnvironment({ language: localized.language });
-    const { wrapper } = createNativeLowUsageAlert({
-      remainingPercent: 10,
-      titleText: localized.titleText,
-      dismissLabel: localized.dismissLabel,
-      progressLabel: localized.progressLabel,
-      actionLabels: ["↗"],
-    });
-    wrapper.style.display = "flex";
-    environment.layout.insertBefore(wrapper, environment.footer);
-
-    const initial = environment.evaluate();
-    assert.equal(initial.freshness, "loading");
-    assert.equal(initial.nativeQuotaHiddenCount, 1, localized.language);
-    assert.equal(wrapper.style.display, "none", localized.language);
-    assert.equal(wrapper.style.getPropertyPriority("display"), "important", localized.language);
-
-    environment.window.__CODEX_QUOTA_PANEL__.unavailable({ reasonCode: "E_RATE_LIMIT_UNAVAILABLE" });
-    assert.equal(wrapper.style.display, "flex", localized.language);
-  }
-});
-
-test("the full panel takes over a card already collapsed by the early suppressor", () => {
-  const environment = createEnvironment();
-  const { wrapper } = createNativeLowUsageAlert({
-    top: 0,
-    bottom: 0,
-    titleText: "Ачаалж байна",
-    dismissLabel: "Хаах",
-    progressLabel: "Ашигласан",
-  });
-  wrapper.style.display = "flex";
-  environment.layout.insertBefore(wrapper, environment.footer);
-  let earlyActive = true;
-  let cleanupCalls = 0;
-  environment.window.__CODEX_QUOTA_EARLY_NATIVE_SUPPRESSOR__ = {
-    status: () => ({ active: earlyActive }),
-    cleanup() {
-      cleanupCalls += 1;
-      earlyActive = false;
-      delete environment.window.__CODEX_QUOTA_EARLY_NATIVE_SUPPRESSOR__;
-    },
-  };
-
+test("an update with no sidebar keeps the latest quota snapshot ready for a later surface", () => {
+  const environment = createEnvironment({ initialSurface: "none" });
   const initial = environment.evaluate();
-  assert.equal(initial.nativeQuotaHiddenCount, 1);
-  assert.equal(wrapper.style.display, "none");
-  assert.equal(wrapper.style.getPropertyPriority("display"), "important");
-  assert.equal(cleanupCalls, 1);
+  const api = environment.window.__CODEX_QUOTA_PANEL__;
+  const fetchedAtMs = 1_800_000_000_000;
+
+  assert.equal(initial.mounted, false);
+  assert.equal(initial.reason, "sidebar-not-present");
+  assert.equal(initial.lifecycleObserved, true);
+
+  const updated = api.update(snapshot(fetchedAtMs));
+  assert.equal(updated.mounted, false);
+  assert.equal(updated.reason, "sidebar-not-present");
+  assert.equal(updated.sidebarSurface, null);
+  assert.equal(updated.bucketCount, 2);
+  assert.equal(updated.displayedBucketCount, 1);
+  assert.equal(updated.fetchedAtMs, fetchedAtMs);
+  assert.equal(updated.freshness, "fresh");
 });
 
-test("startup suppression expires safely if quota loading never resolves", () => {
-  const environment = createEnvironment();
-  const { wrapper } = createNativeLowUsageAlert({ titleText: "Текстгүй шалгалт" });
-  wrapper.style.display = "flex";
-  environment.layout.insertBefore(wrapper, environment.footer);
-
+test("a floating sidebar mutation mounts synchronously with the retained 75% snapshot", () => {
+  const environment = createEnvironment({ initialSurface: "none" });
   environment.evaluate();
-  assert.equal(wrapper.style.display, "none");
-  environment.advance(15_001);
-  const deadline = environment.timeouts.find((entry) => entry.active && entry.milliseconds === 15_000);
-  assert.ok(deadline);
-  deadline.callback();
+  const api = environment.window.__CODEX_QUOTA_PANEL__;
+  api.update(snapshot(1_800_000_000_000));
 
-  assert.equal(environment.window.__CODEX_QUOTA_PANEL__.status().nativeQuotaHiddenCount, 0);
-  assert.equal(wrapper.style.display, "flex");
+  const floating = environment.attachSurface("floating");
+  const status = api.status();
+  const host = floating.layout.children.at(-2);
+
+  assert.equal(status.mounted, true);
+  assert.equal(status.sidebarSurface, "floating");
+  assert.equal(host.id, "codex-quota-panel");
+  assert.equal(host.nextSibling, floating.footer);
+  assert.match(textTree(host._shadow), /75%/);
 });
 
-test("low-usage structural matching rejects malformed and generic progress cards", () => {
-  const cases = [
-    ({ progress }) => progress.setAttribute("max", "1"),
-    ({ status, progress, header }) => {
-      status.removeChild(progress);
-      header.appendChild(progress);
-    },
-    ({ dismiss }) => dismiss.removeAttribute("type"),
-    ({ status }) => status.setAttribute("aria-live", "assertive"),
-    ({ status }) => { status.className = "generic-status-card"; },
-    ({ dismiss }) => { dismiss.className = "generic-dismiss"; },
-  ];
-
-  for (const mutate of cases) {
-    const environment = createEnvironment();
-    const alert = createNativeLowUsageAlert({ titleText: "Хэл үл хамаарна" });
-    mutate(alert);
-    environment.layout.insertBefore(alert.wrapper, environment.footer);
-    const result = environment.evaluate();
-    assert.equal(result.nativeQuotaHiddenCount, 0);
-    assert.notEqual(alert.wrapper.style.display, "none");
-  }
-});
-
-test("two structural low-usage candidates fail closed instead of hiding either", () => {
-  const environment = createEnvironment();
-  const first = createNativeLowUsageAlert({ top: 520, bottom: 610, titleText: "Нэг" });
-  const second = createNativeLowUsageAlert({ top: 620, bottom: 710, titleText: "Хоёр" });
-  environment.layout.insertBefore(first.wrapper, environment.footer);
-  environment.layout.insertBefore(second.wrapper, environment.footer);
-
-  const result = environment.evaluate();
-  assert.equal(result.nativeQuotaHiddenCount, 0);
-  assert.notEqual(first.wrapper.style.display, "none");
-  assert.notEqual(second.wrapper.style.display, "none");
-});
-
-test("a late low-usage sidebar card is hidden in the observer callback before deferred reconciliation", () => {
+test("settings-style sidebar detach and reattach restores the retained panel immediately", () => {
   const environment = createEnvironment();
   environment.evaluate();
   const api = environment.window.__CODEX_QUOTA_PANEL__;
   api.update(snapshot(1_800_000_000_000));
-  const { wrapper } = createNativeLowUsageAlert({ remainingPercent: 10 });
-  wrapper.style.display = "flex";
-  environment.sidebar.appendChild(wrapper);
+  const originalHost = environment.layout.children.at(-2);
 
-  const observer = environment.observers.find((entry) => !entry.disconnected);
-  observer.callback([{ type: "childList", addedNodes: [wrapper] }]);
-  assert.equal(wrapper.style.display, "none");
-  assert.equal(wrapper.style.getPropertyPriority("display"), "important");
-  assert.equal(wrapper.getAttribute("data-codex-quota-native-hidden"), "0.4.4");
+  assert.equal(environment.detachSurface(), true);
+  const detached = api.status();
+  assert.equal(detached.mounted, false);
+  assert.equal(detached.reason, "sidebar-not-present");
+  assert.equal(detached.bucketCount, 2);
+  assert.equal(originalHost.isConnected, false);
 
-  const reconcile = environment.timeouts.find((entry) => entry.active && entry.milliseconds === 80);
-  assert.ok(reconcile);
-  reconcile.callback();
-  const hidden = api.status();
-  assert.equal(hidden.nativeQuotaHiddenCount, 1);
-  assert.equal(wrapper.style.display, "none");
-  assert.equal(wrapper.style.getPropertyPriority("display"), "important");
-  assert.equal(wrapper.getAttribute("data-codex-quota-native-hidden"), "0.4.4");
+  const restoredSurface = environment.attachSurface("docked");
+  const restored = api.status();
+  const restoredHost = restoredSurface.layout.children.at(-2);
 
-  // Browsers collapse a display:none element's geometry. A later reconcile
-  // must keep ownership instead of restoring and hiding it in a loop.
-  wrapper._rect = rect(0, 0);
-  const stable = api.heartbeat();
-  assert.equal(stable.nativeQuotaHiddenCount, 1);
-  assert.equal(wrapper.style.display, "none");
-
-  const unavailable = api.unavailable({ reason: "temporarily unavailable" });
-  assert.equal(unavailable.nativeQuotaHiddenCount, 0);
-  assert.equal(wrapper.style.display, "flex");
-  assert.equal(wrapper.hasAttribute("data-codex-quota-native-hidden"), false);
+  assert.equal(restored.mounted, true);
+  assert.equal(restored.sidebarSurface, "docked");
+  assert.equal(restored.bucketCount, 2);
+  assert.equal(restoredHost.id, "codex-quota-panel");
+  assert.equal(restoredHost.nextSibling, restoredSurface.footer);
+  assert.match(textTree(restoredHost._shadow), /75%/);
 });
 
-test("a low-usage-looking card inside conversation navigation is never hidden", () => {
+test("an externally removed current host is synchronously remounted by the root observer", () => {
   const environment = createEnvironment();
-  const { wrapper } = createNativeLowUsageAlert({ remainingPercent: 10, top: 560, bottom: 650 });
-  environment.scroller.appendChild(wrapper);
-
   environment.evaluate();
-  const status = environment.window.__CODEX_QUOTA_PANEL__.update(snapshot(1_800_000_000_000));
+  const api = environment.window.__CODEX_QUOTA_PANEL__;
+  api.update(snapshot(1_800_000_000_000));
+  const removedHost = environment.layout.children.at(-2);
 
-  assert.equal(status.nativeQuotaHiddenCount, 0);
-  assert.notEqual(wrapper.style.display, "none");
+  environment.layout.removeChild(removedHost);
+  environment.notifyRootMutation([{
+    type: "childList",
+    target: environment.layout,
+    addedNodes: [],
+    removedNodes: [removedHost],
+  }]);
+
+  const status = api.status();
+  const replacementHost = environment.layout.children.at(-2);
+  assert.equal(status.mounted, true);
+  assert.notEqual(replacementHost, removedHost);
+  assert.equal(replacementHost.id, "codex-quota-panel");
+  assert.equal(replacementHost.nextSibling, environment.footer);
+  assert.equal(environment.layout.children.filter((element) => element.id === "codex-quota-panel").length, 1);
+  assert.match(textTree(replacementHost._shadow), /75%/);
 });
 
-test("an unrelated polite progress status outside navigation is never hidden", () => {
-  const environment = createEnvironment();
-  const wrapper = new FakeElement("div", rect(540, 650));
-  const statusCard = new FakeElement("div", rect(540, 650));
-  statusCard.setAttribute("role", "status");
-  statusCard.setAttribute("aria-live", "polite");
-  statusCard.textContent = "Backup 50% complete";
-  const dismiss = new FakeElement("button", rect(548, 568, 20, 228));
-  dismiss.setAttribute("aria-label", "Dismiss backup status");
-  const progress = new FakeElement("progress", rect(630, 636, 236, 12));
-  progress.setAttribute("aria-label", "Backup progress");
-  progress.setAttribute("max", "100");
-  progress.setAttribute("value", "50");
-  statusCard.appendChild(dismiss);
-  statusCard.appendChild(progress);
-  wrapper.appendChild(statusCard);
-  environment.sidebar.appendChild(wrapper);
+test("an existing zero-size floating sidebar mounts synchronously when an attribute makes it visible", () => {
+  const environment = createEnvironment({
+    initialSurface: "floating",
+    sidebarRect: rect(0, 0, 0),
+  });
+  const initial = environment.evaluate();
+  const api = environment.window.__CODEX_QUOTA_PANEL__;
+  api.update(snapshot(1_800_000_000_000));
+  const [floating] = environment.surfaceFixtures;
 
-  environment.evaluate();
-  const result = environment.window.__CODEX_QUOTA_PANEL__.update(snapshot(1_800_000_000_000));
+  assert.equal(initial.mounted, false);
+  assert.equal(api.status().reason, "sidebar-not-present");
+  assert.equal(environment.surfaceFixtures.length, 1);
 
-  assert.equal(result.nativeQuotaHiddenCount, 0);
-  assert.notEqual(wrapper.style.display, "none");
-});
+  floating.sidebar._rect = rect(0, 800);
+  floating.sidebar.clientWidth = 260;
+  floating.sidebar.scrollWidth = 260;
+  floating.sidebar.className = "is-visible";
+  environment.notifyRootMutation([{
+    type: "attributes",
+    target: floating.sidebar,
+    attributeName: "class",
+    oldValue: "",
+  }]);
 
-test("the footer quota and the distinct low-usage sidebar card can both be hidden", () => {
-  const environment = createEnvironment();
-  const nativeFooterQuota = new FakeElement("div", rect(675, 700));
-  nativeFooterQuota.textContent = "Usage remaining 10%";
-  environment.layout.insertBefore(nativeFooterQuota, environment.footer);
-  const { wrapper: lowUsageAlert } = createNativeLowUsageAlert({ remainingPercent: 10 });
-  environment.sidebar.appendChild(lowUsageAlert);
-
-  environment.evaluate();
-  const status = environment.window.__CODEX_QUOTA_PANEL__.update(snapshot(1_800_000_000_000));
-
-  assert.equal(status.nativeQuotaHiddenCount, 2);
-  assert.equal(nativeFooterQuota.style.display, "none");
-  assert.equal(lowUsageAlert.style.display, "none");
-  environment.window.__CODEX_QUOTA_PANEL__.cleanup();
-  assert.notEqual(nativeFooterQuota.style.display, "none");
-  assert.notEqual(lowUsageAlert.style.display, "none");
+  const status = api.status();
+  const host = floating.layout.children.at(-2);
+  assert.equal(status.mounted, true);
+  assert.equal(status.sidebarSurface, "floating");
+  assert.equal(host.id, "codex-quota-panel");
+  assert.equal(host.nextSibling, floating.footer);
+  assert.match(textTree(host._shadow), /75%/);
 });
 
 test("cleanup does not overwrite an externally replaced scroll fade edge", () => {
@@ -1276,39 +1060,6 @@ test("cleanup does not overwrite an externally replaced scroll fade edge", () =>
 
   assert.equal(environment.scroller.style.getPropertyValue("--sidebar-scroll-footer-edge"), "95%");
   assert.equal(environment.scroller.style.getPropertyPriority("--sidebar-scroll-footer-edge"), "important");
-});
-
-test("ambiguous native footer quota candidates are never hidden", () => {
-  const environment = createEnvironment();
-  const firstCandidate = new FakeElement("div", rect(650, 675));
-  firstCandidate.textContent = "Usage remaining 72%";
-  const secondCandidate = new FakeElement("div", rect(675, 700));
-  secondCandidate.textContent = "Usage remaining 64%";
-  environment.layout.insertBefore(firstCandidate, environment.footer);
-  environment.layout.insertBefore(secondCandidate, environment.footer);
-
-  environment.evaluate();
-  const status = environment.window.__CODEX_QUOTA_PANEL__.update(snapshot(1_800_000_000_000));
-
-  assert.equal(status.nativeQuotaHiddenCount, 0);
-  assert.notEqual(firstCandidate.style.display, "none");
-  assert.notEqual(secondCandidate.style.display, "none");
-});
-
-test("a quota-like wrapper containing navigation is never hidden", () => {
-  const environment = createEnvironment();
-  const wrapper = new FakeElement("div", rect(650, 700));
-  wrapper.textContent = "Usage remaining 72%";
-  const nestedScroller = new FakeElement("nav", rect(650, 700));
-  nestedScroller.setAttribute("data-app-action-sidebar-scroll", "");
-  wrapper.appendChild(nestedScroller);
-  environment.layout.insertBefore(wrapper, environment.footer);
-
-  environment.evaluate();
-  const status = environment.window.__CODEX_QUOTA_PANEL__.update(snapshot(1_800_000_000_000));
-
-  assert.equal(status.nativeQuotaHiddenCount, 0);
-  assert.notEqual(wrapper.style.display, "none");
 });
 
 test("unavailable clears quota values and exposes an unavailable status", () => {
@@ -1403,14 +1154,24 @@ test("re-evaluation is idempotent and never inserts a duplicate host", () => {
   assert.equal(hosts.length, 1);
 });
 
-test("the DOM observer watches only child-list changes and debounces reconciliation", () => {
+test("the root lifecycle observer watches structural and visibility changes and debounces stable reconciliation", () => {
   const environment = createEnvironment();
-  environment.evaluate();
+  const initial = environment.evaluate();
   const observer = environment.observers.find((entry) => !entry.disconnected);
   assert.ok(observer);
+  assert.equal(initial.lifecycleObserved, true);
+  assert.equal(observer.target, environment.root);
   assert.equal(observer.config.childList, true);
   assert.equal(observer.config.subtree, true);
-  assert.deepEqual(Object.keys(observer.config).sort(), ["childList", "subtree"]);
+  assert.equal(observer.config.attributes, true);
+  assert.deepEqual(
+    [...observer.config.attributeFilter].sort(),
+    ["aria-hidden", "class", "hidden"],
+  );
+  assert.deepEqual(
+    Object.keys(observer.config).sort(),
+    ["attributeFilter", "attributes", "childList", "subtree"],
+  );
   observer.callback([{ type: "childList" }]);
   observer.callback([{ type: "childList" }]);
   const activeTimeouts = environment.timeouts.filter((entry) => entry.active && entry.milliseconds === 80);
@@ -1453,7 +1214,7 @@ test("failed post-mount geometry validation removes the panel", () => {
   assert.equal(environment.layout.children.some((element) => element.id === "codex-quota-panel"), false);
 });
 
-test("bootstrap fails closed outside an app protocol or without the Codex main shell", () => {
+test("bootstrap rejects a wrong protocol and treats a missing sidebar as transient", () => {
   const wrongProtocol = createEnvironment({ protocol: "https:" });
   const wrongProtocolResult = wrongProtocol.evaluate();
   assert.equal(wrongProtocolResult.mounted, false);
@@ -1463,12 +1224,10 @@ test("bootstrap fails closed outside an app protocol or without the Codex main s
   const missingShell = createEnvironment({ shellReady: false });
   missingShell.evaluate();
   const api = missingShell.window.__CODEX_QUOTA_PANEL__;
-  const rejectedUpdate = api.update(snapshot(1_800_000_000_000));
-  const rejectedUnavailable = api.unavailable({ reason: "should not mount" });
-  assert.equal(rejectedUpdate.mounted, false);
-  assert.equal(rejectedUnavailable.mounted, false);
-  assert.equal(api.status().bucketCount, 0);
-  assert.equal(api.status().reason, "main-shell-not-ready");
+  const waitingUpdate = api.update(snapshot(1_800_000_000_000));
+  assert.equal(waitingUpdate.mounted, false);
+  assert.equal(waitingUpdate.bucketCount, 2);
+  assert.equal(waitingUpdate.reason, "sidebar-not-present");
 
   const routeChanged = createEnvironment();
   routeChanged.evaluate();
@@ -1476,14 +1235,14 @@ test("bootstrap fails closed outside an app protocol or without the Codex main s
   const detached = routeChanged.window.__CODEX_QUOTA_PANEL__.update(snapshot(1_800_000_000_000));
   assert.equal(detached.mounted, false);
   assert.equal(detached.reason, "protocol-not-allowed");
-  assert.equal(detached.bucketCount, 0);
+  assert.equal(detached.bucketCount, 2);
 });
 
-test("early bootstrap retries on DOMContentLoaded once the main shell exists", () => {
+test("bootstrap retries on DOMContentLoaded once a sidebar surface becomes visible", () => {
   const environment = createEnvironment({ shellReady: false, readyState: "loading" });
   const initial = environment.evaluate();
   assert.equal(initial.mounted, false);
-  assert.equal(initial.reason, "main-shell-not-ready");
+  assert.equal(initial.reason, "sidebar-not-present");
 
   environment.revealShell();
   environment.dispatchDocument("DOMContentLoaded");
@@ -1529,96 +1288,6 @@ test("a late account anchor mounts through the bounded fast retry without waitin
   assert.equal(recovered.mounted, true);
   assert.equal(recovered.geometryValidated, true);
   assert.equal(environment.layout.children.filter((element) => element.id === "codex-quota-panel").length, 1);
-});
-
-test("early suppression stays active until a late account anchor lets the full panel take over", () => {
-  const environment = createEnvironment({ menuTrigger: false });
-  const alert = createNativeLowUsageAlert({ top: 0, bottom: 0, titleText: "startup alert" });
-  alert.wrapper.style.display = "none";
-  environment.layout.insertBefore(alert.wrapper, environment.footer);
-  let earlyActive = true;
-  let cleanupCalls = 0;
-  environment.window.__CODEX_QUOTA_EARLY_NATIVE_SUPPRESSOR__ = {
-    status: () => ({ active: earlyActive }),
-    cleanup() {
-      cleanupCalls += 1;
-      earlyActive = false;
-      delete environment.window.__CODEX_QUOTA_EARLY_NATIVE_SUPPRESSOR__;
-    },
-  };
-
-  const initial = environment.evaluate();
-  assert.equal(initial.mounted, false);
-  assert.equal(initial.reason, "anchor-not-found");
-  assert.equal(cleanupCalls, 0);
-  assert.equal(alert.wrapper.style.display, "none");
-
-  const retry = environment.timeouts.find((entry) => entry.active && entry.milliseconds === 100);
-  assert.ok(retry);
-  environment.accountButton.setAttribute("aria-haspopup", "menu");
-  environment.accountButton.setAttribute("aria-expanded", "false");
-  environment.accountButton.setAttribute("data-state", "closed");
-  retry.active = false;
-  retry.callback();
-
-  const recovered = environment.window.__CODEX_QUOTA_PANEL__.status();
-  assert.equal(recovered.mounted, true);
-  assert.equal(recovered.nativeQuotaHiddenCount, 1);
-  assert.equal(cleanupCalls, 1);
-  assert.equal(alert.wrapper.style.display, "none");
-  assert.equal(alert.wrapper.style.getPropertyPriority("display"), "important");
-});
-
-test("unavailable quota releases an existing early guard even while the account anchor is missing", () => {
-  const publications = [
-    (api) => api.unavailable({ reasonCode: "E_RATE_LIMIT_UNAVAILABLE" }),
-    (api) => api.update({
-      availability: "unavailable",
-      reasonCode: "E_RATE_LIMIT_UNAVAILABLE",
-      snapshot: snapshot(1_800_000_000_000),
-    }),
-    (api) => api.update(null),
-  ];
-
-  for (const publish of publications) {
-    const environment = createEnvironment({ menuTrigger: false });
-    let cleanupCalls = 0;
-    environment.window.__CODEX_QUOTA_EARLY_NATIVE_SUPPRESSOR__ = {
-      status: () => ({ active: true }),
-      cleanup() {
-        cleanupCalls += 1;
-        delete environment.window.__CODEX_QUOTA_EARLY_NATIVE_SUPPRESSOR__;
-      },
-    };
-    const initial = environment.evaluate();
-    assert.equal(initial.reason, "anchor-not-found");
-    assert.equal(cleanupCalls, 0);
-
-    publish(environment.window.__CODEX_QUOTA_PANEL__);
-    assert.equal(cleanupCalls, 1);
-    assert.equal(environment.window.__CODEX_QUOTA_EARLY_NATIVE_SUPPRESSOR__, undefined);
-  }
-});
-
-test("the startup deadline releases an existing early guard when the account anchor never appears", () => {
-  const environment = createEnvironment({ menuTrigger: false });
-  let cleanupCalls = 0;
-  environment.window.__CODEX_QUOTA_EARLY_NATIVE_SUPPRESSOR__ = {
-    status: () => ({ active: true }),
-    cleanup() {
-      cleanupCalls += 1;
-      delete environment.window.__CODEX_QUOTA_EARLY_NATIVE_SUPPRESSOR__;
-    },
-  };
-  environment.evaluate();
-  const deadline = environment.timeouts.find((entry) => entry.active && entry.milliseconds === 15_000);
-  assert.ok(deadline);
-
-  environment.advance(15_001);
-  deadline.active = false;
-  deadline.callback();
-  assert.equal(cleanupCalls, 1);
-  assert.equal(environment.window.__CODEX_QUOTA_EARLY_NATIVE_SUPPRESSOR__, undefined);
 });
 
 test("the general bucket uses a readable stacked layout for two limit periods", () => {
