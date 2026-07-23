@@ -3,12 +3,15 @@
 
   const GLOBAL_KEY = "__CODEX_QUOTA_PANEL__";
   const CONTROLLER_ID = "codex-quota-sidebar-projection-v1";
-  const VERSION = "0.4.7";
+  const VERSION = "0.4.8";
   const HOST_ID = "codex-quota-panel";
   const SIDEBAR_SELECTORS = Object.freeze([
     "aside.app-shell-left-panel",
     'aside[data-testid="app-shell-floating-left-panel"]',
   ]);
+  const SETTINGS_LOADING_SELECTOR = 'nav[aria-busy="true"]';
+  const SETTINGS_PANEL_SELECTOR = "[data-settings-panel-slug]";
+  const PRIMARY_SCROLL_SELECTOR = "[data-app-action-sidebar-scroll]";
   const GENERAL_BUCKET_ID = "codex";
   const SPARK_LIMIT_NAME = "gpt-5.3-codex-spark";
   // Compatibility labels for public plans currently represented by the
@@ -296,6 +299,17 @@
       if (!documentRef || typeof documentRef.querySelector !== "function") {
         return { ok: false, reason: "document-unavailable" };
       }
+      const activeSidebar = findActiveSidebar();
+      if (sidebarHasSettingsMarker(activeSidebar)) {
+        state.settingsRouteActive = true;
+        return { ok: false, reason: "settings-route" };
+      }
+      if (state.settingsRouteActive) {
+        if (!sidebarStructureSupportsPanel(activeSidebar)) {
+          return { ok: false, reason: "settings-route" };
+        }
+        state.settingsRouteActive = false;
+      }
       return { ok: true, reason: null };
     } catch {
       return { ok: false, reason: "renderer-check-failed" };
@@ -320,6 +334,26 @@
       }
     }
     return surfaces;
+  }
+
+  function sidebarHasSettingsMarker(sidebar) {
+    if (!sidebar || typeof sidebar.querySelectorAll !== "function") return false;
+    try {
+      if (sidebar.querySelectorAll(SETTINGS_PANEL_SELECTOR).length > 0) return true;
+      return sidebar.querySelectorAll(SETTINGS_LOADING_SELECTOR).length > 0
+        && sidebar.querySelectorAll(PRIMARY_SCROLL_SELECTOR).length === 0;
+    } catch {
+      return false;
+    }
+  }
+
+  function sidebarStructureSupportsPanel(sidebar) {
+    if (!sidebar || !sidebar.isConnected || sidebarHasSettingsMarker(sidebar)) return false;
+    const anchorResult = findAnchor(sidebar);
+    if (!anchorResult.candidate) return false;
+    const { anchor } = anchorResult.candidate;
+    return findScrollRegions(sidebar, anchor)
+      .filter((region) => region.primary === true).length === 1;
   }
 
   function sidebarIsEligible(element) {
@@ -989,6 +1023,7 @@
     surfaceActivationSequence: 0,
     projectionMode: "absent",
     heartbeatTimedOut: false,
+    settingsRouteActive: false,
     cleaned: false,
   };
 
@@ -1769,6 +1804,11 @@
 
   function onLifecycleMutation(records) {
     if (state.cleaned) return;
+    const renderer = rendererCheck();
+    if (!renderer.ok) {
+      parkPanel(renderer.reason);
+      return;
+    }
     if (containsOnlyOwnedHostMutations(records)) {
       // Reparenting the persistent host is normally our own work. If another
       // owner removed or moved it, restore that exact node before paint.
@@ -1783,11 +1823,6 @@
     }
     if (mutationsTouchBlockedLayout(records)) {
       clearLayoutBlock();
-    }
-    const renderer = rendererCheck();
-    if (!renderer.ok) {
-      parkPanel(renderer.reason);
-      return;
     }
     const sidebar = findActiveSidebar();
     if (!sidebar) {
@@ -1818,7 +1853,13 @@
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["class", "hidden", "aria-hidden"],
+      attributeFilter: [
+        "class",
+        "hidden",
+        "aria-hidden",
+        "aria-busy",
+        "data-settings-panel-slug",
+      ],
     });
     if (!state.host || !state.host.isConnected) scheduleMountRetry();
   }

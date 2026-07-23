@@ -52,7 +52,8 @@ pre-rendered in one document-lifetime host while the sidebar is absent. That
 same host moves into docked and floating sidebars before paint, including
 hidden floating surfaces before their reveal animation. Brief route and resize
 layout settling keeps an already visible panel in place instead of hiding and
-re-inserting it.
+re-inserting it. Entering Settings parks the custom card before the Settings
+frame is painted; it returns only when the main conversation sidebar is ready.
 
 ### Data freshness
 

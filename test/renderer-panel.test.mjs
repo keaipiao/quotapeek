@@ -181,6 +181,15 @@ function matchesSelector(element, selector) {
   if (selector === "[data-sidebar-footer]") return element.hasAttribute("data-sidebar-footer");
   if (selector === "[data-slot]") return element.hasAttribute("data-slot");
   if (selector === "[data-testid]") return element.hasAttribute("data-testid");
+  if (selector === "[data-app-action-sidebar-scroll]") {
+    return element.hasAttribute("data-app-action-sidebar-scroll");
+  }
+  if (selector === "nav[aria-busy=\"true\"]") {
+    return tag === "nav" && element.getAttribute("aria-busy") === "true";
+  }
+  if (selector === "[data-settings-panel-slug]") {
+    return element.hasAttribute("data-settings-panel-slug");
+  }
   if (selector === "button[aria-haspopup=\"menu\"]") {
     return tag === "button" && element.getAttribute("aria-haspopup") === "menu";
   }
@@ -1058,6 +1067,320 @@ test("settings-style sidebar detach and reattach reuses the document-lifetime pa
   assert.equal(restoredHost.id, "codex-quota-panel");
   assert.equal(restoredHost.nextSibling, restoredSurface.footer);
   assert.match(textTree(restoredHost._shadow), /75%/);
+});
+
+test("entering Settings parks the card before the retained sidebar can paint", () => {
+  const environment = createEnvironment();
+  environment.evaluate();
+  const api = environment.window.__CODEX_QUOTA_PANEL__;
+  api.update(snapshot(1_800_000_000_000));
+  const originalHost = environment.layout.children.at(-2);
+  const originalShadow = originalHost._shadow;
+  const settingsLoading = new FakeElement("nav", rect(0, 700));
+  settingsLoading.setAttribute("aria-busy", "true");
+  environment.layout.removeChild(environment.scroller);
+  environment.sidebar.appendChild(settingsLoading);
+  environment.notifyRootMutation([
+    {
+      type: "childList",
+      target: environment.layout,
+      addedNodes: [],
+      removedNodes: [environment.scroller],
+    },
+    {
+      type: "childList",
+      target: environment.sidebar,
+      addedNodes: [settingsLoading],
+      removedNodes: [],
+    },
+  ]);
+
+  assert.equal(api.status().mounted, false);
+  assert.equal(api.status().visible, false);
+  assert.equal(api.status().projectionMode, "parked");
+  assert.equal(api.status().reason, "settings-route");
+  assert.equal(originalHost.parentElement, environment.body);
+  assert.equal(originalHost.style.display, "none");
+  assert.equal(originalHost.getAttribute("aria-hidden"), "true");
+  assert.equal(originalHost.inert, true);
+  assert.equal(originalHost._shadow, originalShadow);
+
+  const settingsPanel = new FakeElement("section", rect(60, 760));
+  settingsPanel.setAttribute("data-settings-panel-slug", "general");
+  environment.sidebar.removeChild(settingsLoading);
+  environment.sidebar.appendChild(settingsPanel);
+  environment.notifyRootMutation([{
+    type: "childList",
+    target: environment.sidebar,
+    addedNodes: [settingsPanel],
+    removedNodes: [settingsLoading],
+  }]);
+  api.update(snapshot(1_800_000_000_100));
+  api.heartbeat();
+  assert.equal(api.status().projectionMode, "parked");
+  assert.equal(api.status().visible, false);
+  assert.equal(originalHost.style.display, "none");
+  assert.equal(originalHost._shadow, originalShadow);
+
+  environment.sidebar.removeChild(settingsPanel);
+  environment.layout.removeChild(environment.footer);
+  environment.notifyRootMutation([
+    {
+      type: "childList",
+      target: environment.sidebar,
+      addedNodes: [],
+      removedNodes: [settingsPanel],
+    },
+    {
+      type: "childList",
+      target: environment.layout,
+      addedNodes: [],
+      removedNodes: [environment.footer],
+    },
+  ]);
+
+  assert.equal(api.status().mounted, false);
+  assert.equal(api.status().visible, false);
+  assert.equal(api.status().projectionMode, "parked");
+  assert.equal(api.status().reason, "settings-route");
+  assert.equal(originalHost.style.display, "none");
+
+  environment.advance(40);
+  environment.layout.appendChild(environment.scroller);
+  environment.layout.appendChild(environment.footer);
+  environment.notifyRootMutation([{
+    type: "childList",
+    target: environment.layout,
+    addedNodes: [environment.scroller, environment.footer],
+    removedNodes: [],
+  }]);
+
+  assert.equal(api.status().mounted, true);
+  assert.equal(api.status().visible, true);
+  assert.equal(api.status().projectionMode, "projected");
+  assert.equal(api.status().reason, null);
+  assert.equal(originalHost.parentElement, environment.layout);
+  assert.equal(originalHost.style.display, "block");
+  assert.equal(originalHost.hasAttribute("aria-hidden"), false);
+  assert.equal(originalHost.inert, false);
+  assert.equal(originalHost._shadow, originalShadow);
+  assert.equal(environment.shadowAttachCount, 1);
+});
+
+test("a dormant ready main sidebar cannot release the active Settings latch", () => {
+  const environment = createEnvironment();
+  environment.evaluate();
+  const api = environment.window.__CODEX_QUOTA_PANEL__;
+  api.update(snapshot(1_800_000_000_000));
+  const originalHost = environment.layout.children.at(-2);
+  const originalShadow = originalHost._shadow;
+
+  // Keep the structurally complete docked main sidebar connected but dormant,
+  // as AnimatePresence can do while a floating Settings surface is active.
+  environment.sidebar.setAttribute("aria-hidden", "true");
+  const settingsSurface = environment.attachSurface("floating");
+  assert.equal(originalHost.parentElement, settingsSurface.layout);
+
+  const settingsPanel = new FakeElement("section", rect(60, 760));
+  settingsPanel.setAttribute("data-settings-panel-slug", "general");
+  settingsSurface.sidebar.appendChild(settingsPanel);
+  settingsSurface.layout.removeChild(settingsSurface.scroller);
+  settingsSurface.layout.removeChild(settingsSurface.footer);
+  environment.notifyRootMutation([
+    {
+      type: "childList",
+      target: settingsSurface.sidebar,
+      addedNodes: [settingsPanel],
+      removedNodes: [],
+    },
+    {
+      type: "childList",
+      target: settingsSurface.layout,
+      addedNodes: [],
+      removedNodes: [settingsSurface.scroller, settingsSurface.footer],
+    },
+  ]);
+
+  assert.equal(api.status().projectionMode, "parked");
+  assert.equal(api.status().reason, "settings-route");
+  assert.equal(originalHost.parentElement, environment.body);
+
+  // The explicit marker can disappear before the active Settings surface has
+  // regained the main conversation scroller and account footer. The dormant
+  // ready sidebar must not be allowed to release the Settings latch.
+  settingsSurface.sidebar.removeChild(settingsPanel);
+  environment.notifyRootMutation([{
+    type: "childList",
+    target: settingsSurface.sidebar,
+    addedNodes: [],
+    removedNodes: [settingsPanel],
+  }]);
+
+  const waiting = api.status();
+  assert.equal(waiting.mounted, false);
+  assert.equal(waiting.visible, false);
+  assert.equal(waiting.projectionMode, "parked");
+  assert.equal(waiting.reason, "settings-route");
+  assert.equal(originalHost.parentElement, environment.body);
+  assert.equal(originalHost.style.display, "none");
+  assert.equal(originalHost._shadow, originalShadow);
+  assert.equal(environment.shadowAttachCount, 1);
+});
+
+test("a hidden outgoing Settings sidebar cannot block a reactivated main sidebar first frame", () => {
+  const environment = createEnvironment();
+  environment.evaluate();
+  const api = environment.window.__CODEX_QUOTA_PANEL__;
+  api.update(snapshot(1_800_000_000_000));
+  const originalHost = environment.layout.children.at(-2);
+  const originalShadow = originalHost._shadow;
+  const settingsPanel = new FakeElement("section", rect(60, 760));
+  settingsPanel.setAttribute("data-settings-panel-slug", "general");
+  environment.sidebar.appendChild(settingsPanel);
+  environment.notifyRootMutation([{
+    type: "childList",
+    target: environment.sidebar,
+    addedNodes: [settingsPanel],
+    removedNodes: [],
+  }]);
+  assert.equal(api.status().projectionMode, "parked");
+
+  // Prepare the returning main surface while it is dormant. The handoff
+  // mutation hides the outgoing Settings surface and activates main together.
+  const returningSurface = environment.attachSurface("floating", { ariaHidden: true });
+  assert.equal(api.status().projectionMode, "parked");
+  environment.sidebar.setAttribute("aria-hidden", "true");
+  returningSurface.sidebar.removeAttribute("aria-hidden");
+  environment.notifyRootMutation([
+    {
+      type: "attributes",
+      target: environment.sidebar,
+      attributeName: "aria-hidden",
+    },
+    {
+      type: "attributes",
+      target: returningSurface.sidebar,
+      attributeName: "aria-hidden",
+    },
+  ]);
+
+  const restored = api.status();
+  assert.equal(restored.mounted, true);
+  assert.equal(restored.visible, true);
+  assert.equal(restored.projectionMode, "projected");
+  assert.equal(restored.reason, null);
+  assert.equal(restored.sidebarSurface, "floating");
+  assert.equal(originalHost.parentElement, returningSurface.layout);
+  assert.equal(originalHost.nextSibling, returningSurface.footer);
+  assert.equal(originalHost.style.display, "block");
+  assert.equal(originalHost.hasAttribute("aria-hidden"), false);
+  assert.equal(originalHost.inert, false);
+  assert.equal(originalHost._shadow, originalShadow);
+  assert.equal(environment.shadowAttachCount, 1);
+});
+
+test("an aria-busy Settings marker added to a connected nav parks through the root observer", () => {
+  const environment = createEnvironment();
+  environment.evaluate();
+  const api = environment.window.__CODEX_QUOTA_PANEL__;
+  api.update(snapshot(1_800_000_000_000));
+  const originalHost = environment.layout.children.at(-2);
+  const settingsNavigation = new FakeElement("nav", rect(60, 700));
+  environment.sidebar.appendChild(settingsNavigation);
+  environment.notifyRootMutation([{
+    type: "childList",
+    target: environment.sidebar,
+    addedNodes: [settingsNavigation],
+    removedNodes: [],
+  }]);
+  assert.equal(api.status().projectionMode, "projected");
+
+  const lifecycleObserver = environment.observers.find((entry) => (
+    !entry.disconnected && entry.target === environment.root
+  ));
+  assert.ok(lifecycleObserver);
+  assert.deepEqual(
+    [...lifecycleObserver.config.attributeFilter].sort(),
+    ["aria-busy", "aria-hidden", "class", "data-settings-panel-slug", "hidden"],
+  );
+
+  // The real first Settings commit drops the primary conversation scroller
+  // while setting aria-busy on an already connected Settings navigation.
+  environment.layout.removeChild(environment.scroller);
+  settingsNavigation.setAttribute("aria-busy", "true");
+  environment.notifyRootMutation([
+    {
+      type: "childList",
+      target: environment.layout,
+      addedNodes: [],
+      removedNodes: [environment.scroller],
+    },
+    {
+      type: "attributes",
+      target: settingsNavigation,
+      attributeName: "aria-busy",
+    },
+  ]);
+
+  const parked = api.status();
+  assert.equal(parked.mounted, false);
+  assert.equal(parked.visible, false);
+  assert.equal(parked.projectionMode, "parked");
+  assert.equal(parked.reason, "settings-route");
+  assert.equal(originalHost.parentElement, environment.body);
+  assert.equal(originalHost.style.display, "none");
+});
+
+test("a busy nav beside the primary conversation scroller does not impersonate Settings", () => {
+  const environment = createEnvironment();
+  environment.evaluate();
+  const api = environment.window.__CODEX_QUOTA_PANEL__;
+  api.update(snapshot(1_800_000_000_000));
+  const originalHost = environment.layout.children.at(-2);
+  const originalShadow = originalHost._shadow;
+  const busyConversationNav = new FakeElement("nav", rect(60, 700));
+  environment.sidebar.appendChild(busyConversationNav);
+  environment.notifyRootMutation([{
+    type: "childList",
+    target: environment.sidebar,
+    addedNodes: [busyConversationNav],
+    removedNodes: [],
+  }]);
+
+  busyConversationNav.setAttribute("aria-busy", "true");
+  environment.notifyRootMutation([{
+    type: "attributes",
+    target: busyConversationNav,
+    attributeName: "aria-busy",
+  }]);
+
+  const status = api.status();
+  assert.equal(status.mounted, true);
+  assert.equal(status.visible, true);
+  assert.equal(status.projectionMode, "projected");
+  assert.equal(status.reason, null);
+  assert.equal(originalHost.parentElement, environment.layout);
+  assert.equal(originalHost.style.display, "block");
+  assert.equal(originalHost.hasAttribute("aria-hidden"), false);
+  assert.equal(originalHost.inert, false);
+  assert.equal(originalHost._shadow, originalShadow);
+  assert.equal(environment.shadowAttachCount, 1);
+});
+
+test("initial injection waits while a Settings sidebar marker is present", () => {
+  const environment = createEnvironment();
+  const settingsPanel = new FakeElement("section", rect(60, 760));
+  settingsPanel.setAttribute("data-settings-panel-slug", "general");
+  environment.sidebar.appendChild(settingsPanel);
+
+  const initial = environment.evaluate();
+
+  assert.equal(initial.injected, false);
+  assert.equal(initial.mounted, false);
+  assert.equal(initial.visible, false);
+  assert.equal(initial.projectionMode, "absent");
+  assert.equal(initial.reason, "settings-route");
+  assert.equal(environment.shadowAttachCount, 0);
 });
 
 test("settings return keeps the restored card visible through delayed layout samples", () => {
@@ -2073,7 +2396,7 @@ test("the root lifecycle observer watches structural and visibility changes and 
   assert.equal(observer.config.attributes, true);
   assert.deepEqual(
     [...observer.config.attributeFilter].sort(),
-    ["aria-hidden", "class", "hidden"],
+    ["aria-busy", "aria-hidden", "class", "data-settings-panel-slug", "hidden"],
   );
   assert.deepEqual(
     Object.keys(observer.config).sort(),

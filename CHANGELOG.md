@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.8] - 2026-07-22
+
+### Fixed
+
+- Entering Settings now parks the custom quota card in the first DOM mutation
+  callback, before the Settings frame is painted. Detection uses
+  stable Settings sidebar structure rather than translated text or the browser
+  URL, which Codex does not update for its in-memory route.
+- The Settings state remains latched through loading and staged sidebar
+  replacement. The same document-lifetime host returns only after the main
+  conversation scroller and account anchor are ready, preserving the
+  flicker-free return path introduced in 0.4.7.
+
 ## [0.4.7] - 2026-07-22
 
 ### Fixed
