@@ -508,6 +508,97 @@ test("CdpWatcher ignores same-endpoint settings URL changes while its controller
   await watcher.close();
 });
 
+test("CdpWatcher bootstraps once across a same-context main-settings-main roundtrip", async () => {
+  FakeWebSocket.reset();
+  const port = 55113;
+  let target = {
+    id: "main",
+    type: "page",
+    url: "app://codex/index.html",
+    webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/page/main`,
+  };
+  FakeWebSocket.setTargetState("main", { isMain: true, controllerActive: true });
+  const ready = [];
+  const removed = [];
+  const watcher = new CdpWatcher({
+    port,
+    browserId: "browser-1",
+    browserWebSocketUrl: `ws://127.0.0.1:${port}/devtools/browser/browser-1`,
+    fetchImpl: fakeDiscoveryFetch(port, () => [target]),
+    WebSocketImpl: FakeWebSocket,
+    ownerValidator: async () => ({ ok: true }),
+    pollIntervalMs: 3,
+    identityCheckEvery: 100,
+    ownerCheckEvery: 100,
+    probeTimeoutMs: 100,
+    probeIntervalMs: 1,
+    navigationSettleMs: 15,
+  });
+  const bootstrapEvaluations = () => runtimeEvaluations("main").filter(({ command }) => (
+    command.params.expression.includes("__BOOTSTRAP_SPA_ROUNDTRIP__")
+  ));
+  const probeEvaluations = () => runtimeEvaluations("main").filter(({ command }) => (
+    command.params.expression === DEFAULT_CODEX_RENDERER_PROBE
+  ));
+  const controllerChecks = () => runtimeEvaluations("main").filter(({ command }) => (
+    command.params.expression.includes("__CODEX_QUOTA_PANEL__")
+    && command.params.expression.includes("codex-quota-sidebar-projection-v1")
+  ));
+
+  await watcher.start({
+    bootstrapSource: "globalThis.__BOOTSTRAP_SPA_ROUNDTRIP__ = true",
+    onPageReady: ({ target: readyTarget }) => ready.push(readyTarget.url),
+    onPageRemoved: ({ reason }) => removed.push(reason),
+  });
+  await waitFor(() => ready.length === 1);
+  assert.equal(bootstrapEvaluations().length, 1);
+  const initialProbeCount = probeEvaluations().length;
+  const controllerChecksBeforeSettings = controllerChecks().length;
+
+  FakeWebSocket.setTargetState("main", { isMain: false, controllerActive: true });
+  target = { ...target, url: "app://codex/settings/general" };
+  await waitFor(() => controllerChecks().length > controllerChecksBeforeSettings);
+  const settingsUpdate = await watcher.evaluateAll(
+    "globalThis.__UPDATE_DURING_SPA_SETTINGS__ = true",
+  );
+  assert.deepEqual(
+    settingsUpdate.map(({ targetId, ok, skipped }) => ({ targetId, ok, skipped })),
+    [{ targetId: "main", ok: true, skipped: undefined }],
+  );
+  assert.equal(watcher.size, 1);
+  assert.equal(bootstrapEvaluations().length, 1);
+  assert.equal(probeEvaluations().length, initialProbeCount);
+  assert.deepEqual(ready, ["app://codex/index.html"]);
+  assert.deepEqual(removed, []);
+
+  const controllerChecksBeforeReturn = controllerChecks().length;
+  FakeWebSocket.setTargetState("main", { isMain: true, controllerActive: true });
+  target = { ...target, url: "app://codex/index.html?same-context=1" };
+  await waitFor(() => controllerChecks().length > controllerChecksBeforeReturn);
+  const returnUpdate = await watcher.evaluateAll(
+    "globalThis.__UPDATE_AFTER_SPA_RETURN__ = true",
+  );
+  assert.deepEqual(
+    returnUpdate.map(({ targetId, ok, skipped }) => ({ targetId, ok, skipped })),
+    [{ targetId: "main", ok: true, skipped: undefined }],
+  );
+  assert.equal(watcher.size, 1);
+  assert.equal(bootstrapEvaluations().length, 1);
+  assert.equal(probeEvaluations().length, initialProbeCount);
+  assert.deepEqual(ready, ["app://codex/index.html"]);
+  assert.deepEqual(removed, []);
+
+  FakeWebSocket.setTargetState("main", { isMain: true, controllerActive: false });
+  FakeWebSocket.pageSocket("main").emitProtocol("Runtime.executionContextsCleared");
+  await waitFor(() => watcher.size === 0);
+  await waitFor(() => ready.length === 2);
+  assert.equal(watcher.size, 1);
+  assert.equal(bootstrapEvaluations().length, 2);
+  assert.equal(probeEvaluations().length > initialProbeCount, true);
+  assert.deepEqual(removed, ["execution-contexts-cleared"]);
+  await watcher.close();
+});
+
 test("CdpWatcher re-probes a target immediately when its URL changes main to auxiliary to main", async () => {
   FakeWebSocket.reset();
   const port = 55103;

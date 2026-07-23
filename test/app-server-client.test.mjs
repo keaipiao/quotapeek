@@ -121,7 +121,7 @@ test("starts app-server over stdio and performs the initialize handshake", async
     method: "initialize",
     id: 1,
     params: {
-      clientInfo: { name: "codex-quota", title: "Codex Quota", version: "0.4.5" },
+      clientInfo: { name: "codex-quota", title: "Codex Quota", version: "0.4.6" },
       capabilities: { experimentalApi: false, requestAttestation: false }
     }
   });

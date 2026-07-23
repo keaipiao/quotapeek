@@ -37,8 +37,8 @@ test("the packed package installs only the codex-quota executable", async () => 
     const result = JSON.parse(pack.stdout);
     assert.equal(result.length, 1);
     assert.equal(result[0].name, "@elonmark/codex-quota");
-    assert.equal(result[0].version, "0.4.5");
-    assert.equal(result[0].filename, "elonmark-codex-quota-0.4.5.tgz");
+    assert.equal(result[0].version, "0.4.6");
+    assert.equal(result[0].filename, "elonmark-codex-quota-0.4.6.tgz");
     const packagedPaths = result[0].files.map(({ path }) => path);
     assert.ok(packagedPaths.includes("bin/codex-quota.mjs"));
     assert.equal(packagedPaths.filter((path) => path.startsWith("bin/")).length, 1);
@@ -65,7 +65,7 @@ test("the packed package installs only the codex-quota executable", async () => 
 
     const version = runNpm(["exec", "--prefix", installRoot, "--", "codex-quota", "version"], root);
     assert.equal(version.status, 0, version.stderr || version.stdout);
-    assert.equal(version.stdout.trim(), "0.4.5");
+    assert.equal(version.stdout.trim(), "0.4.6");
   } finally {
     await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }

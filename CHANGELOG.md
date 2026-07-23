@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.6] - 2026-07-22
+
+### Fixed
+
+- The quota card is now a document-lifetime singleton. Settings navigation,
+  responsive sidebar changes, and external DOM removal park or move the same
+  host and Shadow DOM instead of destroying and rebuilding the panel.
+- Hidden floating sidebars are prepared before their reveal animation, so the
+  cached quota card appears with the native sidebar on its first visible frame
+  rather than waiting for a retry, heartbeat, or fresh quota read.
+- Overlapping enter/exit sidebars are resolved by their latest activation,
+  including zero-width docked surfaces before expansion. A delayed heartbeat
+  keeps the current card visible and marks its data stale instead of removing
+  the panel.
+- Same-context main-to-Settings round trips retain the verified renderer and
+  bootstrap only once; only a real execution-context reset creates a new
+  document-level controller.
+
 ## [0.4.5] - 2026-07-22
 
 ### Fixed

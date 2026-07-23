@@ -3,7 +3,7 @@
 
   const GLOBAL_KEY = "__CODEX_QUOTA_PANEL__";
   const CONTROLLER_ID = "codex-quota-sidebar-projection-v1";
-  const VERSION = "0.4.5";
+  const VERSION = "0.4.6";
   const HOST_ID = "codex-quota-panel";
   const SIDEBAR_SELECTORS = Object.freeze([
     "aside.app-shell-left-panel",
@@ -305,24 +305,98 @@
     if (!documentRef || typeof documentRef.querySelector !== "function") return [];
     const surfaces = [];
     for (const selector of SIDEBAR_SELECTORS) {
-      let element = null;
-      try { element = documentRef.querySelector(selector); } catch { element = null; }
-      if (!element || !element.isConnected || surfaces.includes(element)) continue;
-      const rect = rectFrom(element);
-      if (!rect || rect.width <= 0 || rect.height <= 0) continue;
-      surfaces.push(element);
+      let elements = [];
+      try {
+        elements = typeof documentRef.querySelectorAll === "function"
+          ? Array.from(documentRef.querySelectorAll(selector))
+          : [documentRef.querySelector(selector)];
+      } catch {
+        elements = [];
+      }
+      for (const element of elements) {
+        if (!element || !element.isConnected || surfaces.includes(element)) continue;
+        surfaces.push(element);
+      }
     }
     return surfaces;
   }
 
+  function sidebarIsEligible(element) {
+    if (!element || (element.hasAttribute && element.hasAttribute("hidden"))
+      || (element.getAttribute && element.getAttribute("aria-hidden") === "true")) return false;
+    const style = safeComputedStyle(element);
+    const display = String(style.display || "").toLowerCase();
+    const visibility = String(style.visibility || "").toLowerCase();
+    if (display === "none" || visibility === "hidden" || visibility === "collapse") return false;
+    return true;
+  }
+
+  function sidebarIsVisible(element) {
+    if (!sidebarIsEligible(element)) return false;
+    const rect = rectFrom(element);
+    if (!rect || rect.width <= 0 || rect.height <= 0 || rect.right <= 0 || rect.bottom <= 0) return false;
+    const viewportWidth = finiteNumber(Number(runtime.innerWidth));
+    const viewportHeight = finiteNumber(Number(runtime.innerHeight));
+    if (viewportWidth !== null && rect.left >= viewportWidth) return false;
+    if (viewportHeight !== null && rect.top >= viewportHeight) return false;
+    return true;
+  }
+
   function findActiveSidebar() {
     const surfaces = sidebarSurfaces();
+    const connected = new Set(surfaces);
+    for (const previous of state.observedSurfaces) {
+      if (connected.has(previous)) continue;
+      const metadata = state.surfaceMetadata.get(previous);
+      if (metadata) {
+        metadata.connected = false;
+        metadata.eligible = false;
+        metadata.visible = false;
+      }
+    }
+    state.observedSurfaces = connected;
     if (!surfaces.length) return null;
-    const floating = surfaces.find((element) => (
-      element.getAttribute
-      && element.getAttribute("data-testid") === "app-shell-floating-left-panel"
+
+    // AnimatePresence may briefly keep an outgoing sidebar beside a newly
+    // connected one. Rank by the latest connection/visibility activation so
+    // edge-hover selects the new floating surface, while a zero-width docked
+    // surface is prepared before its expand animation starts.
+    const ranked = surfaces.map((element, index) => {
+      let metadata = state.surfaceMetadata.get(element);
+      if (!metadata) {
+        metadata = { connected: false, eligible: false, visible: false, activation: 0 };
+        state.surfaceMetadata.set(element, metadata);
+      }
+      const eligible = sidebarIsEligible(element);
+      const visible = sidebarIsVisible(element);
+      if (!metadata.connected || (eligible && !metadata.eligible) || (visible && !metadata.visible)) {
+        state.surfaceActivationSequence += 1;
+        metadata.activation = state.surfaceActivationSequence;
+      }
+      metadata.connected = true;
+      metadata.eligible = eligible;
+      metadata.visible = visible;
+      return {
+        element,
+        index,
+        eligible,
+        visible,
+        activation: metadata.activation,
+        floating: Boolean(
+          element.getAttribute
+          && element.getAttribute("data-testid") === "app-shell-floating-left-panel"
+        ),
+      };
+    });
+    const candidates = ranked.filter((entry) => entry.eligible);
+    const pool = candidates.length ? candidates : ranked;
+    pool.sort((left, right) => (
+      right.activation - left.activation
+      || Number(right.visible) - Number(left.visible)
+      || Number(right.floating) - Number(left.floating)
+      || right.index - left.index
     ));
-    return floating || surfaces.find((element) => element === state.sidebar) || surfaces[0];
+    return pool[0] ? pool[0].element : null;
   }
 
   function finiteNumber(value) {
@@ -700,9 +774,92 @@
     return seeds;
   }
 
+  function structuralAnchorScore(anchor, parent, seed, hops) {
+    const anchorStyle = safeComputedStyle(anchor);
+    const parentStyle = safeComputedStyle(parent);
+    const position = String(anchorStyle.position || "static").toLowerCase();
+    const parentPosition = String(parentStyle.position || "static").toLowerCase();
+    const parentDisplay = String(parentStyle.display || "block").toLowerCase();
+    const parentDirection = String(parentStyle.flexDirection || "").toLowerCase();
+    if (position === "fixed" || position === "absolute" || position === "sticky"
+      || parentPosition === "sticky") return Number.NEGATIVE_INFINITY;
+    if (parentDisplay === "flex"
+      && parentDirection !== "column" && parentDirection !== "column-reverse") {
+      return Number.NEGATIVE_INFINITY;
+    }
+
+    const signals = semanticSignals(anchor);
+    const parentClass = String(parent.className || "");
+    let score = seed.score - hops * 2;
+    if (signals) {
+      if (signals.tagFooter || signals.contentInfo || signals.sidebarFooter) score += 72;
+      if (signals.stableDataMarker) score += 24;
+      if (signals.identityMarker || signals.menuTrigger) score += 8;
+      if (signals.buttonLike) score -= 12;
+    }
+    if (parentPosition === "absolute"
+      && /(?:^|\s)bottom-0(?:\s|$)/.test(parentClass)) score += 64;
+    if (parentDisplay === "flex" && parentDirection === "column") score += 12;
+    if (parentDisplay === "grid" || parentDisplay === "block") score += 4;
+    return score;
+  }
+
+  function findStructuralAnchor(sidebar) {
+    let descendants = [];
+    try { descendants = Array.from(sidebar.querySelectorAll("*")); } catch { descendants = []; }
+    const exactBottomRoots = descendants.filter((element) => {
+      if (String(element.tagName || "").toLowerCase() !== "div") return false;
+      const tokens = new Set(String(element.className || "").split(/\s+/).filter(Boolean));
+      return ["absolute", "inset-x-0", "bottom-0", "z-20"].every((token) => tokens.has(token));
+    });
+    if (exactBottomRoots.length === 1) {
+      const parent = exactBottomRoots[0];
+      const children = Array.from(parent.children || []).filter((child) => child !== state.host);
+      const anchor = children.at(-1);
+      const position = String(safeComputedStyle(anchor).position || "static").toLowerCase();
+      if (anchor && anchor.parentElement === parent
+        && position !== "fixed" && position !== "absolute" && position !== "sticky") {
+        return {
+          candidate: {
+            anchor,
+            parent,
+            score: 256,
+            semanticScore: 0,
+            depth: elementDepth(anchor, sidebar),
+            signals: semanticSignals(anchor),
+          },
+          reason: null,
+          ranked: [],
+        };
+      }
+    }
+
+    const slots = new Map();
+    for (const seed of collectSemanticSeeds(sidebar)) {
+      let anchor = seed.element;
+      for (let hops = 0; anchor && anchor !== sidebar && hops < 8; hops += 1, anchor = anchor.parentElement) {
+        const parent = anchor.parentElement;
+        if (!parent || !sidebar.contains(anchor) || (parent !== sidebar && !sidebar.contains(parent))) continue;
+        const score = structuralAnchorScore(anchor, parent, seed, hops);
+        const candidate = {
+          anchor,
+          parent,
+          score,
+          semanticScore: seed.score,
+          depth: elementDepth(anchor, sidebar),
+          signals: seed.signals,
+        };
+        const previous = slots.get(anchor);
+        if (!previous || candidate.score > previous.score) slots.set(anchor, candidate);
+      }
+    }
+    return chooseUniqueScored(Array.from(slots.values()));
+  }
+
   function findAnchor(sidebar) {
     const sidebarRect = rectFrom(sidebar);
     if (!sidebarRect) return { candidate: null, reason: "sidebar-geometry-invalid", ranked: [] };
+    if (sidebarRect.width <= 0 || sidebarRect.height <= 0) return findStructuralAnchor(sidebar);
     const slots = new Map();
 
     for (const seed of collectSemanticSeeds(sidebar)) {
@@ -762,7 +919,8 @@
         collapsed[relatedIndex] = candidate;
       }
     }
-    return chooseUniqueScored(collapsed);
+    const geometryResult = chooseUniqueScored(collapsed);
+    return geometryResult.candidate ? geometryResult : findStructuralAnchor(sidebar);
   }
 
   function createElement(tagName, className, textValue) {
@@ -800,10 +958,16 @@
     localeTimer: null,
     languageChangeHandler: null,
     lastHeartbeatMs: now(),
+    hostInjectedAtMs: null,
     mountedAtMs: null,
     geometryValidated: false,
     reason: "not-mounted",
     anchorScore: null,
+    surfaceMetadata: new WeakMap(),
+    observedSurfaces: new Set(),
+    surfaceActivationSequence: 0,
+    projectionMode: "absent",
+    heartbeatTimedOut: false,
     cleaned: false,
   };
 
@@ -840,7 +1004,7 @@
       state.snapshot,
       atMs,
       state.explicitlyUnavailable,
-      state.cachedSnapshot
+      state.cachedSnapshot || state.heartbeatTimedOut
     );
     const panel = state.panel;
     clearChildren(panel);
@@ -1160,18 +1324,20 @@
       const overflowY = String(style.overflowY || "").toLowerCase();
       if (overflowY !== "auto" && overflowY !== "scroll") continue;
       const rect = rectFrom(element);
-      if (!rect || rect.height < 32) continue;
-      if (anchorRect && rect.top >= anchorRect.top) continue;
+      const primary = Boolean(element.hasAttribute && element.hasAttribute("data-app-action-sidebar-scroll"));
+      if ((!rect || rect.height < 32) && !primary) continue;
+      if (anchorRect && rect && anchorRect.height > 0 && rect.top >= anchorRect.top) continue;
       regions.push({
         element,
-        primary: Boolean(element.hasAttribute && element.hasAttribute("data-app-action-sidebar-scroll")),
-        beforeClientHeight: Number(element.clientHeight) || Math.round(rect.height),
-        beforeScrollHeight: Number(element.scrollHeight) || Math.round(rect.height),
+        primary,
+        beforeClientHeight: Number(element.clientHeight) || Math.round((rect || {}).height || 0),
+        beforeScrollHeight: Number(element.scrollHeight) || Math.round((rect || {}).height || 0),
         beforeScrollTop: Math.max(0, Number(element.scrollTop) || 0),
-        beforeMaxScroll: Math.max(0, (Number(element.scrollHeight) || Math.round(rect.height))
-          - (Number(element.clientHeight) || Math.round(rect.height))),
-        beforeAtBottom: Math.max(0, (Number(element.scrollHeight) || Math.round(rect.height))
-          - (Number(element.clientHeight) || Math.round(rect.height)) - (Number(element.scrollTop) || 0)) <= 2,
+        beforeMaxScroll: Math.max(0, (Number(element.scrollHeight) || Math.round((rect || {}).height || 0))
+          - (Number(element.clientHeight) || Math.round((rect || {}).height || 0))),
+        beforeAtBottom: Math.max(0, (Number(element.scrollHeight) || Math.round((rect || {}).height || 0))
+          - (Number(element.clientHeight) || Math.round((rect || {}).height || 0))
+          - (Number(element.scrollTop) || 0)) <= 2,
         beforeOverflowY: overflowY,
         beforePaddingBottom: cssPixels(style.paddingBottom),
       });
@@ -1299,15 +1465,75 @@
     };
   }
 
-  function detachPanel(reason) {
+  function persistentHostParent() {
+    const body = documentRef && documentRef.body;
+    if (body && body.isConnected !== false) return body;
+    const root = documentRef && documentRef.documentElement;
+    return root && root.isConnected !== false ? root : null;
+  }
+
+  function applyProjectedHostStyle(host) {
+    if (!host) return;
+    host.style.cssText = "display:block;position:static;flex:0 0 auto;align-self:stretch;inline-size:auto;max-inline-size:100%;min-inline-size:0;z-index:auto;pointer-events:none;overflow:hidden;";
+    if (host.hasAttribute("aria-hidden")) host.removeAttribute("aria-hidden");
+    host.inert = false;
+  }
+
+  function applyParkedHostStyle(host) {
+    if (!host) return;
+    host.style.cssText = "display:none;position:fixed;inset:auto;inline-size:0;block-size:0;pointer-events:none;overflow:hidden;";
+    if (host.getAttribute("aria-hidden") !== "true") host.setAttribute("aria-hidden", "true");
+    host.inert = true;
+  }
+
+  function ensurePersistentHost() {
+    if (state.host) {
+      if (!state.host.isConnected) {
+        const parent = persistentHostParent();
+        if (parent) parent.appendChild(state.host);
+        applyParkedHostStyle(state.host);
+        state.projectionMode = "parked";
+      }
+      return state.host;
+    }
+    const parent = persistentHostParent();
+    if (!parent) return null;
+    refreshLocale(false);
+    const host = createElement("section");
+    host.id = HOST_ID;
+    host.setAttribute("aria-label", messagesFor(state.locale).heading);
+    host.setAttribute("lang", state.locale);
+    applyParkedHostStyle(host);
+    const shadow = host.attachShadow({ mode: "closed" });
+    const style = createElement("style");
+    style.textContent = panelCss();
+    const panel = createElement("div", "quota-panel");
+    shadow.appendChild(style);
+    shadow.appendChild(panel);
+    state.host = host;
+    state.shadow = shadow;
+    state.panel = panel;
+    state.hostInjectedAtMs = now();
+    state.projectionMode = "parked";
+    state.ownedHosts.add(host);
+    parent.appendChild(host);
+    render();
+    return host;
+  }
+
+  function parkPanel(reason) {
+    // Route and responsive transitions park the exact host under body. Its
+    // closed shadow root and rendered quota snapshot remain intact.
+    state.projectionMode = "parked";
     stopResizeObserver();
     restoreScrollDock();
-    if (state.host && state.host.parentNode) state.host.parentNode.removeChild(state.host);
+    if (state.host) {
+      applyParkedHostStyle(state.host);
+      const parent = persistentHostParent();
+      if (parent && state.host.parentElement !== parent) parent.appendChild(state.host);
+    }
     state.sidebar = null;
     state.anchor = null;
-    state.host = null;
-    state.shadow = null;
-    state.panel = null;
     state.scrollRegions = null;
     state.scrollDock = null;
     state.sidebarBaseline = null;
@@ -1315,6 +1541,16 @@
     state.mountedAtMs = null;
     state.anchorScore = null;
     state.reason = reason || "detached";
+  }
+
+  function destroyPanel(reason) {
+    parkPanel(reason);
+    state.projectionMode = "absent";
+    if (state.host && state.host.parentNode) state.host.parentNode.removeChild(state.host);
+    state.host = null;
+    state.shadow = null;
+    state.panel = null;
+    state.hostInjectedAtMs = null;
   }
 
   function stopLifecycleObserver() {
@@ -1361,9 +1597,11 @@
   }
 
   function surfaceIsHealthy(sidebar = findActiveSidebar()) {
-    return Boolean(sidebar && sidebar === state.sidebar
+    return Boolean(state.projectionMode === "projected"
+      && sidebar && sidebar === state.sidebar
       && state.host && state.host.isConnected
       && state.anchor && state.anchor.isConnected
+      && state.host.parentElement === state.anchor.parentElement
       && state.host.nextSibling === state.anchor);
   }
 
@@ -1371,6 +1609,11 @@
     if (!Array.isArray(records) || !records.length) return false;
     let changedNodeCount = 0;
     for (const record of records) {
+      if (record && record.type === "attributes") {
+        if (record.target !== state.host) return false;
+        changedNodeCount += 1;
+        continue;
+      }
       const nodes = [
         ...Array.from(record && record.addedNodes || []),
         ...Array.from(record && record.removedNodes || []),
@@ -1385,20 +1628,26 @@
   function onLifecycleMutation(records) {
     if (state.cleaned) return;
     if (containsOnlyOwnedHostMutations(records)) {
-      // Our own insert/remove records need no reconciliation. If some other
-      // owner removed the currently projected host, however, restore it in
-      // this same pre-paint callback.
-      if (state.host && !state.host.isConnected && findActiveSidebar()) mount();
+      // Reparenting the persistent host is normally our own work. If another
+      // owner removed or moved it, restore that exact node before paint.
+      if (state.projectionMode === "parked") {
+        if (state.host && !state.host.isConnected) ensurePersistentHost();
+        return;
+      }
+      const sidebar = findActiveSidebar();
+      if (sidebar && !surfaceIsHealthy(sidebar)) mount();
+      else if (!sidebar && state.host && !state.host.isConnected) parkPanel("sidebar-not-present");
       return;
     }
     const renderer = rendererCheck();
     if (!renderer.ok) {
-      detachPanel(renderer.reason);
+      parkPanel(renderer.reason);
       return;
     }
     const sidebar = findActiveSidebar();
     if (!sidebar) {
-      if (state.host || state.sidebar) detachPanel("sidebar-not-present");
+      if (state.sidebar || (state.host && !state.host.isConnected)) parkPanel("sidebar-not-present");
+      else state.reason = "sidebar-not-present";
       scheduleMountRetry();
       return;
     }
@@ -1408,6 +1657,9 @@
     if (!surfaceIsHealthy(sidebar)) {
       mount();
       return;
+    }
+    if (state.resizeObserver) {
+      for (const surface of sidebarSurfaces()) state.resizeObserver.observe(surface);
     }
     scheduleReconcile();
   }
@@ -1429,8 +1681,27 @@
   function observeForResize(sidebar, anchor, host, panel) {
     stopResizeObserver();
     if (typeof runtime.ResizeObserver !== "function") return;
-    state.resizeObserver = new runtime.ResizeObserver(scheduleReconcile);
-    for (const element of [sidebar, anchor, host, panel, state.scrollDock && state.scrollDock.element]) {
+    state.resizeObserver = new runtime.ResizeObserver(() => {
+      if (state.cleaned) return;
+      const activeSidebar = findActiveSidebar();
+      if (activeSidebar && !surfaceIsHealthy(activeSidebar)) {
+        // A dormant surface can become visible through motion-driven geometry
+        // without a DOM attribute mutation. Switch surfaces in this callback
+        // before paint; only same-surface validation uses the debounce.
+        mount();
+        return;
+      }
+      scheduleReconcile();
+    });
+    const targets = new Set([
+      ...sidebarSurfaces(),
+      sidebar,
+      anchor,
+      host,
+      panel,
+      state.scrollDock && state.scrollDock.element,
+    ]);
+    for (const element of targets) {
       if (element) state.resizeObserver.observe(element);
     }
   }
@@ -1469,15 +1740,23 @@
     ensureLifecycleObserver();
     const renderer = rendererCheck();
     if (!renderer.ok) {
-      detachPanel(renderer.reason);
+      if (state.host || state.sidebar) parkPanel(renderer.reason);
+      else state.reason = renderer.reason;
       if (runtime.location && runtime.location.protocol === "app:") {
         scheduleDomReadyMount();
       }
       return publicStatus();
     }
+    const host = ensurePersistentHost();
+    if (!host) {
+      state.reason = "document-host-unavailable";
+      scheduleDomReadyMount();
+      scheduleMountRetry();
+      return publicStatus();
+    }
     const sidebar = findActiveSidebar();
     if (!sidebar) {
-      detachPanel("sidebar-not-present");
+      parkPanel("sidebar-not-present");
       scheduleDomReadyMount();
       scheduleMountRetry();
       return publicStatus();
@@ -1486,54 +1765,65 @@
 
     if (surfaceIsHealthy(sidebar)) {
       renderPreservingBottom();
+      if (!sidebarIsVisible(sidebar)) {
+        state.geometryValidated = false;
+        state.reason = "sidebar-hidden-prepared";
+        clearMountRetry();
+        return publicStatus();
+      }
       const validation = validateCurrentLayout();
       if (!validation.ok) {
-        detachPanel(validation.reason);
+        parkPanel(validation.reason);
         scheduleMountRetry();
+      } else {
+        state.geometryValidated = true;
+        state.reason = null;
+        clearMountRetry();
       }
       return publicStatus();
     }
 
-    detachPanel("remounting");
     const anchorResult = findAnchor(sidebar);
     if (!anchorResult.candidate) {
-      state.reason = anchorResult.reason;
+      if (!surfaceIsHealthy(state.sidebar)) parkPanel(anchorResult.reason);
+      else state.reason = anchorResult.reason;
       scheduleMountRetry();
       return publicStatus();
     }
 
     const { anchor, parent, score } = anchorResult.candidate;
     if (!parent || anchor.parentElement !== parent) {
-      state.reason = "anchor-detached";
+      if (!surfaceIsHealthy(state.sidebar)) parkPanel("anchor-detached");
+      else state.reason = "anchor-detached";
       scheduleMountRetry();
       return publicStatus();
     }
 
     const scrollRegions = findScrollRegions(sidebar, anchor);
+    if (scrollRegions.filter((region) => region.primary === true).length !== 1) {
+      if (!surfaceIsHealthy(state.sidebar)) parkPanel("conversation-scroll-dock-not-found");
+      else state.reason = "conversation-scroll-dock-not-found";
+      scheduleMountRetry();
+      return publicStatus();
+    }
     const sidebarBaseline = {
       clientWidth: Number(sidebar.clientWidth) || 0,
       scrollWidth: Number(sidebar.scrollWidth) || 0,
     };
+    stopResizeObserver();
+    restoreScrollDock();
     refreshLocale(false);
-    const host = createElement("section");
-    host.id = HOST_ID;
-    host.setAttribute("aria-label", messagesFor(state.locale).heading);
-    host.setAttribute("lang", state.locale);
-    host.style.cssText = "display:block;position:static;flex:0 0 auto;align-self:stretch;inline-size:auto;max-inline-size:100%;min-inline-size:0;z-index:auto;pointer-events:none;overflow:hidden;";
-    const shadow = host.attachShadow({ mode: "closed" });
-    const style = createElement("style");
-    style.textContent = panelCss();
-    const panel = createElement("div", "quota-panel");
-    shadow.appendChild(style);
-    shadow.appendChild(panel);
-
-    state.ownedHosts.add(host);
-    parent.insertBefore(host, anchor);
+    applyProjectedHostStyle(host);
+    try {
+      parent.insertBefore(host, anchor);
+    } catch {
+      parkPanel("anchor-detached");
+      scheduleMountRetry();
+      return publicStatus();
+    }
     state.sidebar = sidebar;
     state.anchor = anchor;
-    state.host = host;
-    state.shadow = shadow;
-    state.panel = panel;
+    state.projectionMode = "projected";
     state.scrollRegions = scrollRegions;
     state.sidebarBaseline = sidebarBaseline;
     state.anchorScore = score;
@@ -1543,8 +1833,16 @@
 
     const scrollDockElement = applyScrollDock(scrollRegions);
     if (!scrollDockElement) {
-      detachPanel("conversation-scroll-dock-not-found");
+      parkPanel("conversation-scroll-dock-not-found");
       scheduleMountRetry();
+      return publicStatus();
+    }
+    observeForResize(sidebar, anchor, host, state.panel);
+
+    if (!sidebarIsVisible(sidebar)) {
+      state.geometryValidated = false;
+      state.reason = "sidebar-hidden-prepared";
+      clearMountRetry();
       return publicStatus();
     }
 
@@ -1553,23 +1851,23 @@
       anchor,
       host,
       scrollRegions,
-      panel,
+      state.panel,
       sidebarBaseline,
       { allowReservedBottomSettle: true, enforceScrollRange: true, scrollDockElement }
     );
     if (!validation.ok) {
-      detachPanel(validation.reason);
+      parkPanel(validation.reason);
       scheduleMountRetry();
       return publicStatus();
     }
     state.geometryValidated = !validation.pending;
     state.reason = validation.reason;
     clearMountRetry();
-    observeForResize(sidebar, anchor, host, panel);
 
     if (typeof runtime.requestAnimationFrame === "function") {
       runtime.requestAnimationFrame(() => runtime.requestAnimationFrame(() => {
-        if (!state.host || state.host !== host) return;
+        if (!state.host || state.host !== host || state.sidebar !== sidebar
+          || state.anchor !== anchor || host.parentElement !== parent) return;
         if (state.scrollDock && state.scrollDock.element === scrollDockElement) {
           alignBottomScrollAnchor(state.scrollDock.bottomAnchor);
         }
@@ -1578,12 +1876,12 @@
           anchor,
           host,
           scrollRegions,
-          panel,
+          state.panel,
           sidebarBaseline,
           { enforceScrollRange: true, scrollDockElement }
         );
         if (!delayedValidation.ok) {
-          detachPanel(delayedValidation.reason);
+          parkPanel(delayedValidation.reason);
           scheduleMountRetry();
         }
         else {
@@ -1601,26 +1899,40 @@
     ensureLifecycleObserver();
     const renderer = rendererCheck();
     if (!renderer.ok) {
-      detachPanel(renderer.reason);
+      if (state.host || state.sidebar) parkPanel(renderer.reason);
+      else state.reason = renderer.reason;
       if (runtime.location && runtime.location.protocol === "app:") {
         scheduleDomReadyMount();
       }
       return publicStatus();
     }
+    if (!ensurePersistentHost()) {
+      state.reason = "document-host-unavailable";
+      scheduleMountRetry();
+      return publicStatus();
+    }
     const sidebar = findActiveSidebar();
     if (!sidebar) {
-      detachPanel("sidebar-not-present");
+      render();
+      parkPanel("sidebar-not-present");
       scheduleMountRetry();
       return publicStatus();
     }
     if (!surfaceIsHealthy(sidebar)) return mount();
     renderPreservingBottom();
+    if (!sidebarIsVisible(sidebar)) {
+      state.geometryValidated = false;
+      state.reason = "sidebar-hidden-prepared";
+      clearMountRetry();
+      return publicStatus();
+    }
     const validation = validateCurrentLayout();
     if (!validation.ok) {
-      detachPanel(validation.reason);
+      parkPanel(validation.reason);
       scheduleMountRetry();
     } else {
       state.geometryValidated = true;
+      state.reason = null;
       clearMountRetry();
     }
     return publicStatus();
@@ -1628,6 +1940,7 @@
 
   function update(value) {
     state.lastHeartbeatMs = now();
+    state.heartbeatTimedOut = false;
     let rawSnapshot = value;
     let explicitlyUnavailable = false;
     let cachedSnapshot = false;
@@ -1657,6 +1970,7 @@
 
   function unavailable(details) {
     state.lastHeartbeatMs = now();
+    state.heartbeatTimedOut = false;
     const reasonCode = typeof details === "string"
       ? safeReasonCode(details)
       : safeReasonCode(details && details.reasonCode);
@@ -1669,14 +1983,25 @@
 
   function heartbeat() {
     state.lastHeartbeatMs = now();
+    state.heartbeatTimedOut = false;
     if (state.cleaned) return mount();
     return reconcile();
   }
 
+  function markHeartbeatTimedOut() {
+    // A delayed daemon heartbeat must not create an empty sidebar frame.
+    // Keep the singleton projected and present its current snapshot as stale.
+    state.heartbeatTimedOut = true;
+    state.reason = "heartbeat-timeout";
+    if (state.panel) renderPreservingBottom();
+    return publicStatus();
+  }
+
   function cleanup(reason = "manual-cleanup") {
     state.cleaned = true;
+    state.heartbeatTimedOut = false;
     clearMountRetry();
-    detachPanel(reason);
+    destroyPanel(reason);
     stopObservers();
     clearDomReadyMount();
     if (state.countdownTimer !== null) runtime.clearInterval(state.countdownTimer);
@@ -1700,8 +2025,9 @@
     }
     if (state.heartbeatTimer === null) {
       state.heartbeatTimer = runtime.setInterval(() => {
-        if (!state.cleaned && now() - state.lastHeartbeatMs > HEARTBEAT_TIMEOUT_MS) {
-          cleanup("heartbeat-timeout");
+        if (!state.cleaned && !state.heartbeatTimedOut
+          && now() - state.lastHeartbeatMs > HEARTBEAT_TIMEOUT_MS) {
+          markHeartbeatTimedOut();
         }
       }, HEARTBEAT_CHECK_MS);
     }
@@ -1723,14 +2049,16 @@
       state.snapshot,
       now(),
       state.explicitlyUnavailable,
-      state.cachedSnapshot
+      state.cachedSnapshot || state.heartbeatTimedOut
     );
     return {
       version: VERSION,
       locale: state.locale,
       formatLocale: state.formatLocale,
       localeSource: state.localeSource,
-      mounted: Boolean(state.host && state.host.isConnected),
+      injected: Boolean(state.host && state.host.isConnected),
+      mounted: surfaceIsHealthy(state.sidebar),
+      visible: surfaceIsHealthy(state.sidebar) && sidebarIsVisible(state.sidebar),
       freshness: currentFreshness,
       cached: state.cachedSnapshot,
       reason: state.reason,
@@ -1742,12 +2070,15 @@
       scrollDocked: Boolean(state.scrollDock && state.scrollDock.element && state.scrollDock.element.isConnected),
       fetchedAtMs: state.snapshot ? state.snapshot.fetchedAtMs : null,
       lastHeartbeatMs: state.lastHeartbeatMs,
+      hostInjectedAtMs: state.hostInjectedAtMs,
       sidebarConnected: Boolean(state.sidebar && state.sidebar.isConnected),
       sidebarSurface: state.sidebar && state.sidebar.getAttribute
         && state.sidebar.getAttribute("data-testid") === "app-shell-floating-left-panel"
         ? "floating"
         : state.sidebar ? "docked" : null,
       lifecycleObserved: Boolean(state.lifecycleObserver),
+      projectionMode: state.projectionMode,
+      heartbeatTimedOut: state.heartbeatTimedOut,
       cleaned: state.cleaned,
     };
   }

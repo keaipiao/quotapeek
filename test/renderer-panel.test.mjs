@@ -151,6 +151,7 @@ class FakeElement {
   }
 
   attachShadow() {
+    if (typeof this._onAttachShadow === "function") this._onAttachShadow();
     this._shadow = new FakeElement("shadow-root", this._rect);
     this._shadow._rootConnected = true;
     return this._shadow;
@@ -236,11 +237,19 @@ function createEnvironment(options = {}) {
     } else {
       sidebar.className = "app-shell-left-panel";
     }
+    if (overrides.ariaHidden) sidebar.setAttribute("aria-hidden", "true");
     sidebar.clientWidth = sidebarRect.width;
     sidebar.scrollWidth = sidebarRect.width;
 
     const layout = new FakeElement("div", rect(0, 800));
-    layout._computed = { display: "flex", flexDirection: "column", position: "static", overflowY: "visible" };
+    const exactBottomRoot = overrides.exactBottomRoot ?? options.exactBottomRoot;
+    if (exactBottomRoot) layout.className = "absolute inset-x-0 bottom-0 z-20";
+    layout._computed = {
+      display: "flex",
+      flexDirection: "column",
+      position: exactBottomRoot ? "absolute" : "static",
+      overflowY: "visible",
+    };
     sidebar.appendChild(layout);
     const scroller = new FakeElement("nav", rect(60, 700));
     scroller.setAttribute("data-app-action-sidebar-scroll", "");
@@ -283,10 +292,12 @@ function createEnvironment(options = {}) {
 
   const intervals = [];
   const timeouts = [];
+  const animationFrames = [];
   const observers = [];
   const resizeObservers = [];
   const documentListeners = new Map();
   const windowListeners = new Map();
+  let shadowAttachCount = 0;
   class FakeMutationObserver {
     constructor(callback) {
       this.callback = callback;
@@ -319,6 +330,7 @@ function createEnvironment(options = {}) {
     readyState: options.readyState ?? "complete",
     createElement(tagName) {
       const element = new FakeElement(tagName);
+      element._onAttachShadow = () => { shadowAttachCount += 1; };
       if (tagName === "section") {
         element._rect = options.hostRect || rect(700, 760);
         element.clientWidth = element._rect.width;
@@ -340,6 +352,21 @@ function createEnvironment(options = {}) {
         return surfaceFixtures.find((fixture) => fixture.kind === "floating" && fixture.sidebar.isConnected)?.sidebar ?? null;
       }
       return null;
+    },
+    querySelectorAll(selector) {
+      if (!shellVisible) return [];
+      if (selector === "aside.app-shell-left-panel") {
+        return surfaceFixtures
+          .filter((fixture) => fixture.kind === "docked" && fixture.sidebar.isConnected)
+          .map((fixture) => fixture.sidebar);
+      }
+      if (selector === "aside[data-testid=\"app-shell-floating-left-panel\"]") {
+        return surfaceFixtures
+          .filter((fixture) => fixture.kind === "floating" && fixture.sidebar.isConnected)
+          .map((fixture) => fixture.sidebar);
+      }
+      const match = this.querySelector(selector);
+      return match ? [match] : [];
     },
     addEventListener(name, callback) { documentListeners.set(name, callback); },
     removeEventListener(name, callback) {
@@ -386,7 +413,14 @@ function createEnvironment(options = {}) {
       return handle;
     },
     clearTimeout(handle) { if (handle) handle.active = false; },
-    requestAnimationFrame(callback) { callback(); },
+    requestAnimationFrame(callback) {
+      if (options.queueAnimationFrames) {
+        animationFrames.push(callback);
+        return callback;
+      }
+      callback();
+      return callback;
+    },
     addEventListener(name, callback) { windowListeners.set(name, callback); },
     removeEventListener(name, callback) {
       if (windowListeners.get(name) === callback) windowListeners.delete(name);
@@ -438,6 +472,7 @@ function createEnvironment(options = {}) {
   return {
     window,
     root,
+    body,
     sidebar,
     layout,
     scroller,
@@ -445,8 +480,10 @@ function createEnvironment(options = {}) {
     accountButton,
     intervals,
     timeouts,
+    animationFrames,
     observers,
     resizeObservers,
+    get shadowAttachCount() { return shadowAttachCount; },
     surfaceFixtures,
     evaluate,
     attachSurface,
@@ -465,6 +502,14 @@ function createEnvironment(options = {}) {
     dispatchWindow(name) {
       const callback = windowListeners.get(name);
       if (callback) callback();
+    },
+    flushAnimationFrames() {
+      let guard = 0;
+      while (animationFrames.length && guard < 100) {
+        animationFrames.shift()();
+        guard += 1;
+      }
+      if (animationFrames.length) throw new Error("Animation frame queue did not settle");
     },
   };
 }
@@ -935,6 +980,7 @@ test("an update with no sidebar keeps the latest quota snapshot ready for a late
   const fetchedAtMs = 1_800_000_000_000;
 
   assert.equal(initial.mounted, false);
+  assert.equal(initial.injected, true);
   assert.equal(initial.reason, "sidebar-not-present");
   assert.equal(initial.lifecycleObserved, true);
 
@@ -949,10 +995,16 @@ test("an update with no sidebar keeps the latest quota snapshot ready for a late
 });
 
 test("a floating sidebar mutation mounts synchronously with the retained 75% snapshot", () => {
-  const environment = createEnvironment({ initialSurface: "none" });
+  const environment = createEnvironment({
+    initialSurface: "none",
+    queueAnimationFrames: true,
+  });
   environment.evaluate();
   const api = environment.window.__CODEX_QUOTA_PANEL__;
   api.update(snapshot(1_800_000_000_000));
+  const parkedHost = findTree(environment.body, (element) => element.id === "codex-quota-panel");
+  const originalShadow = parkedHost._shadow;
+  assert.match(textTree(parkedHost._shadow), /75%/);
 
   const floating = environment.attachSurface("floating");
   const status = api.status();
@@ -960,24 +1012,36 @@ test("a floating sidebar mutation mounts synchronously with the retained 75% sna
 
   assert.equal(status.mounted, true);
   assert.equal(status.sidebarSurface, "floating");
+  assert.equal(host, parkedHost);
+  assert.equal(host._shadow, originalShadow);
+  assert.equal(environment.shadowAttachCount, 1);
   assert.equal(host.id, "codex-quota-panel");
   assert.equal(host.nextSibling, floating.footer);
   assert.match(textTree(host._shadow), /75%/);
+  assert.ok(environment.animationFrames.length > 0);
+
+  environment.flushAnimationFrames();
+  assert.equal(floating.layout.children.at(-2), host);
+  assert.equal(api.status().mounted, true);
+  assert.equal(environment.shadowAttachCount, 1);
 });
 
-test("settings-style sidebar detach and reattach restores the retained panel immediately", () => {
+test("settings-style sidebar detach and reattach reuses the document-lifetime panel immediately", () => {
   const environment = createEnvironment();
   environment.evaluate();
   const api = environment.window.__CODEX_QUOTA_PANEL__;
   api.update(snapshot(1_800_000_000_000));
   const originalHost = environment.layout.children.at(-2);
+  const originalShadow = originalHost._shadow;
 
   assert.equal(environment.detachSurface(), true);
   const detached = api.status();
   assert.equal(detached.mounted, false);
+  assert.equal(detached.injected, true);
   assert.equal(detached.reason, "sidebar-not-present");
   assert.equal(detached.bucketCount, 2);
-  assert.equal(originalHost.isConnected, false);
+  assert.equal(originalHost.isConnected, true);
+  assert.equal(originalHost.parentElement, environment.body);
 
   const restoredSurface = environment.attachSurface("docked");
   const restored = api.status();
@@ -986,9 +1050,155 @@ test("settings-style sidebar detach and reattach restores the retained panel imm
   assert.equal(restored.mounted, true);
   assert.equal(restored.sidebarSurface, "docked");
   assert.equal(restored.bucketCount, 2);
+  assert.equal(restoredHost, originalHost);
+  assert.equal(restoredHost._shadow, originalShadow);
+  assert.equal(environment.shadowAttachCount, 1);
   assert.equal(restoredHost.id, "codex-quota-panel");
   assert.equal(restoredHost.nextSibling, restoredSurface.footer);
   assert.match(textTree(restoredHost._shadow), /75%/);
+});
+
+test("docked and floating sidebar transitions move the same pre-rendered panel", () => {
+  const environment = createEnvironment();
+  environment.evaluate();
+  const api = environment.window.__CODEX_QUOTA_PANEL__;
+  api.update({
+    snapshot: snapshot(1_800_000_000_000),
+    availability: "cached",
+  });
+  const originalHost = environment.layout.children.at(-2);
+  const originalShadow = originalHost._shadow;
+
+  const floating = environment.attachSurface("floating");
+  const floatingHost = floating.layout.children.at(-2);
+  assert.equal(api.status().sidebarSurface, "floating");
+  assert.equal(floatingHost, originalHost);
+  assert.equal(floatingHost._shadow, originalShadow);
+  assert.match(textTree(floatingHost._shadow), /正在刷新/);
+  assert.match(textTree(floatingHost._shadow), /75%/);
+  assert.equal(environment.layout.children.includes(originalHost), false);
+
+  assert.equal(environment.detachSurface(floating), true);
+  const restoredHost = environment.layout.children.at(-2);
+  assert.equal(api.status().sidebarSurface, "docked");
+  assert.equal(restoredHost, originalHost);
+  assert.equal(restoredHost._shadow, originalShadow);
+  assert.equal(environment.shadowAttachCount, 1);
+  assert.match(textTree(restoredHost._shadow), /75%/);
+});
+
+test("a newly connected zero-width docked sidebar is prepared before an exiting floating sidebar", () => {
+  const environment = createEnvironment({ initialSurface: "floating" });
+  environment.evaluate();
+  const api = environment.window.__CODEX_QUOTA_PANEL__;
+  api.update(snapshot(1_800_000_000_000));
+  const floating = environment.surfaceFixtures[0];
+  const originalHost = floating.layout.children.at(-2);
+  const originalShadow = originalHost._shadow;
+
+  const docked = environment.attachSurface("docked", {
+    sidebarRect: rect(0, 0, 0),
+  });
+  const preparedHost = docked.layout.children.at(-2);
+  assert.equal(api.status().sidebarSurface, "docked");
+  assert.equal(api.status().visible, false);
+  assert.equal(preparedHost, originalHost);
+  assert.equal(preparedHost._shadow, originalShadow);
+  assert.equal(floating.layout.children.includes(originalHost), false);
+  assert.match(textTree(preparedHost._shadow), /75%/);
+
+  docked.sidebar._rect = rect(0, 800);
+  docked.sidebar.clientWidth = 260;
+  docked.sidebar.scrollWidth = 260;
+  const resizeObserver = environment.resizeObservers.find((entry) => (
+    !entry.disconnected && entry.targets.includes(docked.sidebar)
+  ));
+  assert.ok(resizeObserver);
+  resizeObserver.callback();
+  const reconcile = environment.timeouts.find((entry) => entry.active && entry.milliseconds === 80);
+  assert.ok(reconcile);
+  reconcile.callback();
+
+  assert.equal(api.status().visible, true);
+  assert.equal(api.status().geometryValidated, true);
+  assert.equal(docked.layout.children.at(-2), originalHost);
+  assert.equal(environment.shadowAttachCount, 1);
+});
+
+test("a dormant floating sidebar becoming visible by resize switches surfaces synchronously", () => {
+  const environment = createEnvironment({
+    initialSurface: "floating",
+    sidebarRect: rect(0, 0, 0),
+  });
+  environment.evaluate();
+  const api = environment.window.__CODEX_QUOTA_PANEL__;
+  api.update(snapshot(1_800_000_000_000));
+  const floating = environment.surfaceFixtures[0];
+  const originalHost = floating.layout.children.at(-2);
+  const originalShadow = originalHost._shadow;
+  const docked = environment.attachSurface("docked");
+
+  assert.equal(api.status().sidebarSurface, "docked");
+  assert.equal(docked.layout.children.at(-2), originalHost);
+
+  floating.sidebar._rect = rect(0, 800);
+  floating.sidebar.clientWidth = 260;
+  floating.sidebar.scrollWidth = 260;
+  const resizeObserver = environment.resizeObservers.find((entry) => (
+    !entry.disconnected
+    && entry.targets.includes(floating.sidebar)
+    && entry.targets.includes(docked.sidebar)
+  ));
+  assert.ok(resizeObserver);
+  resizeObserver.callback();
+
+  assert.equal(api.status().sidebarSurface, "floating");
+  assert.equal(api.status().visible, true);
+  assert.equal(floating.layout.children.at(-2), originalHost);
+  assert.equal(originalHost._shadow, originalShadow);
+  assert.equal(docked.layout.children.includes(originalHost), false);
+  assert.equal(environment.shadowAttachCount, 1);
+});
+
+test("active surface selection ignores hidden floating sidebars and chooses the newest visible one", () => {
+  const environment = createEnvironment();
+  environment.evaluate();
+  const api = environment.window.__CODEX_QUOTA_PANEL__;
+  api.update(snapshot(1_800_000_000_000));
+  const originalHost = environment.layout.children.at(-2);
+  const originalShadow = originalHost._shadow;
+
+  const hiddenFloating = environment.attachSurface("floating", { ariaHidden: true });
+  assert.equal(api.status().sidebarSurface, "docked");
+  assert.equal(environment.layout.children.at(-2), originalHost);
+  assert.equal(hiddenFloating.layout.children.some((child) => child === originalHost), false);
+
+  environment.sidebar.setAttribute("aria-hidden", "true");
+  hiddenFloating.sidebar.removeAttribute("aria-hidden");
+  environment.notifyRootMutation([
+    {
+      type: "attributes",
+      target: environment.sidebar,
+      attributeName: "aria-hidden",
+    },
+    {
+      type: "attributes",
+      target: hiddenFloating.sidebar,
+      attributeName: "aria-hidden",
+    },
+  ]);
+  assert.equal(api.status().sidebarSurface, "floating");
+  assert.equal(hiddenFloating.layout.children.at(-2), originalHost);
+  assert.equal(originalHost.style.display, "block");
+  assert.equal(originalHost.hasAttribute("aria-hidden"), false);
+  assert.equal(originalHost.inert, false);
+
+  const newestFloating = environment.attachSurface("floating");
+  assert.equal(api.status().sidebarSurface, "floating");
+  assert.equal(newestFloating.layout.children.at(-2), originalHost);
+  assert.equal(hiddenFloating.layout.children.includes(originalHost), false);
+  assert.equal(originalHost._shadow, originalShadow);
+  assert.equal(environment.shadowAttachCount, 1);
 });
 
 test("an externally removed current host is synchronously remounted by the root observer", () => {
@@ -1009,14 +1219,15 @@ test("an externally removed current host is synchronously remounted by the root 
   const status = api.status();
   const replacementHost = environment.layout.children.at(-2);
   assert.equal(status.mounted, true);
-  assert.notEqual(replacementHost, removedHost);
+  assert.equal(replacementHost, removedHost);
+  assert.equal(environment.shadowAttachCount, 1);
   assert.equal(replacementHost.id, "codex-quota-panel");
   assert.equal(replacementHost.nextSibling, environment.footer);
   assert.equal(environment.layout.children.filter((element) => element.id === "codex-quota-panel").length, 1);
   assert.match(textTree(replacementHost._shadow), /75%/);
 });
 
-test("an existing zero-size floating sidebar mounts synchronously when an attribute makes it visible", () => {
+test("an existing zero-size floating sidebar is preloaded before an attribute makes it visible", () => {
   const environment = createEnvironment({
     initialSurface: "floating",
     sidebarRect: rect(0, 0, 0),
@@ -1026,8 +1237,13 @@ test("an existing zero-size floating sidebar mounts synchronously when an attrib
   api.update(snapshot(1_800_000_000_000));
   const [floating] = environment.surfaceFixtures;
 
-  assert.equal(initial.mounted, false);
-  assert.equal(api.status().reason, "sidebar-not-present");
+  const preparedHost = floating.layout.children.at(-2);
+  const preparedShadow = preparedHost._shadow;
+  assert.equal(initial.mounted, true);
+  assert.equal(initial.visible, false);
+  assert.equal(api.status().reason, "sidebar-hidden-prepared");
+  assert.equal(preparedHost.id, "codex-quota-panel");
+  assert.match(textTree(preparedHost._shadow), /75%/);
   assert.equal(environment.surfaceFixtures.length, 1);
 
   floating.sidebar._rect = rect(0, 800);
@@ -1044,10 +1260,40 @@ test("an existing zero-size floating sidebar mounts synchronously when an attrib
   const status = api.status();
   const host = floating.layout.children.at(-2);
   assert.equal(status.mounted, true);
+  assert.equal(status.visible, true);
   assert.equal(status.sidebarSurface, "floating");
+  assert.equal(host, preparedHost);
+  assert.equal(host._shadow, preparedShadow);
+  assert.equal(environment.shadowAttachCount, 1);
   assert.equal(host.id, "codex-quota-panel");
   assert.equal(host.nextSibling, floating.footer);
   assert.match(textTree(host._shadow), /75%/);
+
+  const reconcile = environment.timeouts.find((entry) => entry.active && entry.milliseconds === 80);
+  assert.ok(reconcile);
+  reconcile.callback();
+  assert.equal(api.status().geometryValidated, true);
+  assert.equal(floating.layout.children.at(-2), preparedHost);
+  assert.equal(environment.shadowAttachCount, 1);
+});
+
+test("an exact bottom layout preloads a zero-size sidebar before account menus exist", () => {
+  const environment = createEnvironment({
+    initialSurface: "floating",
+    sidebarRect: rect(0, 0, 0),
+    menuTrigger: false,
+    exactBottomRoot: true,
+  });
+  const initial = environment.evaluate();
+  const [floating] = environment.surfaceFixtures;
+  const host = floating.layout.children.at(-2);
+
+  assert.equal(initial.mounted, true);
+  assert.equal(initial.visible, false);
+  assert.equal(initial.reason, "sidebar-hidden-prepared");
+  assert.equal(host.id, "codex-quota-panel");
+  assert.equal(host.nextSibling, floating.footer);
+  assert.equal(environment.shadowAttachCount, 1);
 });
 
 test("cleanup does not overwrite an externally replaced scroll fade edge", () => {
@@ -1060,6 +1306,35 @@ test("cleanup does not overwrite an externally replaced scroll fade edge", () =>
 
   assert.equal(environment.scroller.style.getPropertyValue("--sidebar-scroll-footer-edge"), "95%");
   assert.equal(environment.scroller.style.getPropertyPriority("--sidebar-scroll-footer-edge"), "important");
+});
+
+test("manual cleanup destroys the singleton and only an explicit heartbeat creates a new lifecycle", () => {
+  const environment = createEnvironment();
+  environment.evaluate();
+  const api = environment.window.__CODEX_QUOTA_PANEL__;
+  const originalHost = environment.layout.children.at(-2);
+  const originalShadow = originalHost._shadow;
+
+  const cleaned = api.cleanup("manual-test");
+  assert.equal(cleaned.mounted, false);
+  assert.equal(cleaned.injected, false);
+  assert.equal(cleaned.cleaned, true);
+  assert.equal(cleaned.projectionMode, "absent");
+  assert.equal(originalHost.isConnected, false);
+  assert.ok(environment.observers.every((observer) => observer.disconnected));
+  assert.ok(environment.intervals.every((interval) => interval.active === false));
+
+  environment.notifyRootMutation([{ type: "childList", addedNodes: [], removedNodes: [] }]);
+  assert.equal(api.status().injected, false);
+  assert.equal(environment.shadowAttachCount, 1);
+
+  const recovered = api.heartbeat();
+  const replacementHost = environment.layout.children.at(-2);
+  assert.equal(recovered.mounted, true);
+  assert.equal(recovered.cleaned, false);
+  assert.notEqual(replacementHost, originalHost);
+  assert.notEqual(replacementHost._shadow, originalShadow);
+  assert.equal(environment.shadowAttachCount, 2);
 });
 
 test("unavailable clears quota values and exposes an unavailable status", () => {
@@ -1147,11 +1422,18 @@ test("re-evaluation is idempotent and never inserts a duplicate host", () => {
   const environment = createEnvironment();
   environment.evaluate();
   const firstApi = environment.window.__CODEX_QUOTA_PANEL__;
+  const firstHost = environment.layout.children.at(-2);
+  const firstShadow = firstHost._shadow;
   const secondResult = environment.evaluate();
+  firstApi.heartbeat();
+  firstApi.update(snapshot(1_800_000_000_000));
   const hosts = environment.layout.children.filter((element) => element.id === "codex-quota-panel");
   assert.equal(secondResult.mounted, true);
   assert.equal(environment.window.__CODEX_QUOTA_PANEL__, firstApi);
+  assert.equal(hosts[0], firstHost);
+  assert.equal(hosts[0]._shadow, firstShadow);
   assert.equal(hosts.length, 1);
+  assert.equal(environment.shadowAttachCount, 1);
 });
 
 test("the root lifecycle observer watches structural and visibility changes and debounces stable reconciliation", () => {
@@ -1179,29 +1461,61 @@ test("the root lifecycle observer watches structural and visibility changes and 
   assert.equal(activeTimeouts[0].milliseconds, 80);
 });
 
-test("heartbeat timeout removes the panel and disconnects its observer", () => {
-  const environment = createEnvironment();
-  environment.evaluate();
-  environment.advance(121_000);
-  const heartbeatInterval = environment.intervals.find((entry) => entry.milliseconds === 10_000);
-  heartbeatInterval.callback();
-  const status = environment.window.__CODEX_QUOTA_PANEL__.status();
-  assert.equal(status.mounted, false);
-  assert.equal(status.cleaned, true);
-  assert.equal(status.reason, "heartbeat-timeout");
-  assert.equal(environment.layout.children.some((element) => element.id === "codex-quota-panel"), false);
-  assert.ok(environment.observers.every((observer) => observer.disconnected));
-});
-
-test("a later heartbeat remounts after timeout and restarts cleanup timers", () => {
+test("heartbeat timeout keeps the persistent panel visible and marks its snapshot stale", () => {
   const environment = createEnvironment();
   environment.evaluate();
   const api = environment.window.__CODEX_QUOTA_PANEL__;
+  api.update(snapshot(1_800_000_000_000));
+  const originalHost = environment.layout.children.at(-2);
+  const originalShadow = originalHost._shadow;
+  environment.advance(121_000);
+  const heartbeatInterval = environment.intervals.find((entry) => entry.milliseconds === 10_000);
+  heartbeatInterval.callback();
+  const status = api.status();
+  assert.equal(status.mounted, true);
+  assert.equal(status.injected, true);
+  assert.equal(status.heartbeatTimedOut, true);
+  assert.equal(status.cleaned, false);
+  assert.equal(status.freshness, "stale");
+  assert.equal(status.reason, "heartbeat-timeout");
+  assert.equal(originalHost.parentElement, environment.layout);
+  assert.equal(originalHost._shadow, originalShadow);
+  assert.equal(environment.shadowAttachCount, 1);
+  assert.match(textTree(originalHost._shadow), /可能已过期/);
+  assert.match(textTree(originalHost._shadow), /75%/);
+  assert.ok(environment.observers.some((observer) => !observer.disconnected));
+});
+
+test("sidebar changes during heartbeat timeout keep the same panel and heartbeat restores freshness", () => {
+  const environment = createEnvironment();
+  environment.evaluate();
+  const api = environment.window.__CODEX_QUOTA_PANEL__;
+  api.update(snapshot(1_800_000_000_000));
+  const originalHost = environment.layout.children.at(-2);
+  const originalShadow = originalHost._shadow;
   environment.advance(121_000);
   environment.intervals.find((entry) => entry.milliseconds === 10_000 && entry.active).callback();
+
+  environment.sidebar.setAttribute("aria-hidden", "true");
+  environment.notifyRootMutation([{
+    type: "attributes",
+    target: environment.sidebar,
+    attributeName: "aria-hidden",
+  }]);
+  const floating = environment.attachSurface("floating");
+  assert.equal(floating.layout.children.at(-2), originalHost);
+  assert.equal(api.status().heartbeatTimedOut, true);
+  assert.equal(api.status().mounted, true);
+
   const recovered = api.heartbeat();
+  const restoredHost = floating.layout.children.at(-2);
   assert.equal(recovered.mounted, true);
+  assert.equal(recovered.heartbeatTimedOut, false);
+  assert.equal(recovered.freshness, "fresh");
   assert.equal(recovered.cleaned, false);
+  assert.equal(restoredHost, originalHost);
+  assert.equal(restoredHost._shadow, originalShadow);
+  assert.equal(environment.shadowAttachCount, 1);
   assert.ok(environment.intervals.filter((entry) => entry.milliseconds === 10_000 && entry.active).length === 1);
 });
 
@@ -1212,6 +1526,45 @@ test("failed post-mount geometry validation removes the panel", () => {
   assert.equal(result.geometryValidated, false);
   assert.equal(result.reason, "panel-overlaps-account-footer");
   assert.equal(environment.layout.children.some((element) => element.id === "codex-quota-panel"), false);
+});
+
+test("owned parking mutations do not bypass layout-failure retry backoff", () => {
+  const environment = createEnvironment({ hostRect: rect(730, 790), footerTop: 760 });
+  const result = environment.evaluate();
+  const api = environment.window.__CODEX_QUOTA_PANEL__;
+  const host = findTree(environment.body, (element) => element.id === "codex-quota-panel");
+  const observer = environment.observers.find((entry) => !entry.disconnected);
+
+  assert.equal(result.mounted, false);
+  assert.equal(result.projectionMode, "parked");
+  assert.ok(host);
+  assert.equal(host.parentElement, environment.body);
+  assert.equal(host.style.display, "none");
+  observer.callback([
+    {
+      type: "attributes",
+      target: host,
+      attributeName: "aria-hidden",
+      addedNodes: [],
+      removedNodes: [],
+    },
+    {
+      type: "childList",
+      target: environment.body,
+      addedNodes: [host],
+      removedNodes: [host],
+    },
+  ]);
+
+  assert.equal(api.status().mounted, false);
+  assert.equal(api.status().projectionMode, "parked");
+  assert.equal(host.parentElement, environment.body);
+  assert.equal(environment.layout.children.includes(host), false);
+  assert.equal(environment.shadowAttachCount, 1);
+  assert.equal(
+    environment.timeouts.filter((entry) => entry.active && entry.milliseconds === 100).length,
+    1,
+  );
 });
 
 test("bootstrap rejects a wrong protocol and treats a missing sidebar as transient", () => {

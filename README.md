@@ -48,8 +48,9 @@ back to English. Codex Quota identifies the native low-usage card by its exact
 UI structure rather than translated text. A document-lifetime policy hides its
 docked, floating-sidebar, and compact-window copies from startup onward,
 independently of quota loading. The custom panel keeps the latest snapshot
-while the sidebar is absent and appears immediately when either sidebar
-surface is created.
+pre-rendered in one document-lifetime host while the sidebar is absent. That
+same host moves into docked and floating sidebars before paint, including
+hidden floating surfaces before their reveal animation.
 
 ### Data freshness
 
